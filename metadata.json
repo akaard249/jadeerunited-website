@@ -1,0 +1,6 @@
+{
+  "name": "Jadeer United",
+  "description": "Corporate operational leasing, fleet rentals, showroom, certified used cars, and sustainable GCC mobility solutions across Bahrain, Saudi Arabia, and Oman.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
