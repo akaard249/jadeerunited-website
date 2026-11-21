@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { motion } from 'motion/react';
 import {
   LayoutDashboard,
   Car,
@@ -12,11 +13,13 @@ import {
   Pencil,
   Trash2,
   Star,
+  MessageSquareQuote,
 } from 'lucide-react';
 import { api, getAdminSession } from '../lib/api';
 import type {
   AdminDashboardStats,
   AdminUser,
+  ClientReview,
   ContactMessageRecord,
   QuotationRequestRecord,
   QuotationStatus,
@@ -26,16 +29,17 @@ import type {
 import { JadeerLogoMark, VehicleImage } from '../components/BrandMark';
 import { VehicleFormModal } from '../components/admin/VehicleFormModal';
 import { QuotationDetailModal } from '../components/admin/QuotationDetailModal';
+import { AmbientGoldBackdrop, EASE_LUXURY } from '../components/MotionPrimitives';
 
-type AdminTab = 'dashboard' | 'vehicles' | 'quotations' | 'messages';
+type AdminTab = 'dashboard' | 'vehicles' | 'quotations' | 'messages' | 'reviews';
 
 const QUOTATION_STATUS_TEXT: Record<QuotationStatus, { label: string; color: string }> = {
-  new: { label: 'New', color: 'text-[#B45309]' },
-  in_review: { label: 'In Review', color: 'text-[#1D4ED8]' },
-  quoted: { label: 'Quoted', color: 'text-[#0F766E]' },
-  approved: { label: 'Approved', color: 'text-[#15803D]' },
-  rejected: { label: 'Rejected', color: 'text-[#B91C1C]' },
-  closed: { label: 'Closed', color: 'text-[#64748B]' },
+  new: { label: 'New', color: 'text-[#FBBF24]' },
+  in_review: { label: 'In Review', color: 'text-[#60A5FA]' },
+  quoted: { label: 'Quoted', color: 'text-[#2DD4BF]' },
+  approved: { label: 'Approved', color: 'text-[#4ADE80]' },
+  rejected: { label: 'Rejected', color: 'text-[#F87171]' },
+  closed: { label: 'Closed', color: 'text-[#B4B0A8]' },
 };
 
 export function AdminPage() {
@@ -47,30 +51,28 @@ export function AdminPage() {
     envPasscodeActive: boolean;
   }>({ checked: false, needsSetup: false, envPasscodeActive: false });
 
-  // Auth form state
   const [setupName, setSetupName] = useState('Jadeer Fleet Administrator');
   const [authEmail, setAuthEmail] = useState('admin@jadeerunited.com');
   const [authPassword, setAuthPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // Admin workspace state
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [stats, setStats] = useState<AdminDashboardStats | null>(null);
   const [recentQuotations, setRecentQuotations] = useState<QuotationRequestRecord[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [quotations, setQuotations] = useState<QuotationRequestRecord[]>([]);
   const [messages, setMessages] = useState<ContactMessageRecord[]>([]);
+  const [reviews, setReviews] = useState<ClientReview[]>([]);
+  const [confirmDeleteReviewId, setConfirmDeleteReviewId] = useState<number | null>(null);
   const [loadingData, setLoadingData] = useState(false);
 
-  // Vehicles filters & modals
   const [vehicleFilterType, setVehicleFilterType] = useState<'all' | 'showroom' | 'used'>('all');
   const [vehicleSearch, setVehicleSearch] = useState('');
   const [vehicleModalOpen, setVehicleModalOpen] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [confirmDeleteVehicleId, setConfirmDeleteVehicleId] = useState<number | null>(null);
 
-  // Quotations filters & modal
   const [quoteStatusFilter, setQuoteStatusFilter] = useState('all');
   const [quoteCountryFilter, setQuoteCountryFilter] = useState('all');
   const [quoteSearch, setQuoteSearch] = useState('');
@@ -111,7 +113,7 @@ export function AdminPage() {
       });
       setVehicles(res.vehicles);
     } catch {
-      // handled via 401 session clear if expired
+      // handled
     } finally {
       setLoadingData(false);
     }
@@ -145,12 +147,25 @@ export function AdminPage() {
     }
   };
 
+  const loadReviews = async () => {
+    setLoadingData(true);
+    try {
+      const res = await api.getAdminReviews();
+      setReviews(res.reviews);
+    } catch {
+      // handled
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
   useEffect(() => {
     if (!adminUser) return;
     if (activeTab === 'dashboard') loadDashboard();
     if (activeTab === 'vehicles') loadVehicles();
     if (activeTab === 'quotations') loadQuotations();
     if (activeTab === 'messages') loadMessages();
+    if (activeTab === 'reviews') loadReviews();
   }, [adminUser, activeTab, vehicleFilterType, vehicleSearch, quoteStatusFilter, quoteCountryFilter, quoteSearch]);
 
   const handleAuthSubmit = async (e: FormEvent) => {
@@ -205,121 +220,124 @@ export function AdminPage() {
     }
   };
 
-  // ============================================================
-  // UNAUTHENTICATED GATE (Setup or Login)
-  // ============================================================
   if (!adminUser) {
     return (
-      <div className="min-h-screen bg-[#F8F8F6] flex flex-col justify-center items-center px-6 py-12">
-        <div className="w-full max-w-md bg-white border border-[#E3E5E0] rounded-lg p-8 space-y-6">
-          <div className="flex items-center justify-between">
-            <Link to="/" className="flex items-center gap-2.5 text-[#1B1F1A] font-display font-bold">
-              <JadeerLogoMark className="h-6 w-6" tone="gold" />
-              <span>Jadeer United</span>
-            </Link>
-            <span className="text-xs text-[#5E6B5B]">Admin Portal</span>
-          </div>
-
-          {!authStatus.checked ? (
-            <div className="py-10 text-center text-sm text-[#5E6B5B]">
-              Checking authentication configuration...
+      <div className="relative min-h-screen bg-[#0B0B0D] text-[#E4E0D8] flex flex-col justify-center items-center px-6 py-12 overflow-hidden">
+        <AmbientGoldBackdrop />
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, ease: EASE_LUXURY }}
+          className="relative z-10 w-full max-w-md bg-[#141418] border border-white/10 rounded-xl overflow-hidden"
+        >
+          <div className="h-[2px] w-full gold-top-accent" />
+          <div className="p-8 space-y-6">
+            <div className="flex items-center justify-between">
+              <Link to="/" className="flex items-center gap-2.5 text-white font-display font-bold">
+                <JadeerLogoMark className="h-6 w-6" tone="gold" />
+                <span>Jadeer United</span>
+              </Link>
+              <span className="text-xs text-[#C8A45D]">Admin Portal</span>
             </div>
-          ) : (
-            <>
-              <div>
-                <h1 className="font-display text-2xl font-bold text-[#1B1F1A]">
-                  {authStatus.needsSetup ? 'Initialize Admin Account' : 'Administrator Sign In'}
-                </h1>
-                <p className="mt-1.5 text-sm text-[#4D544C] leading-relaxed">
-                  {authStatus.needsSetup
-                    ? 'Create the first administrator credential for this workspace to unlock Fleet Inventory and Quotation Management.'
-                    : authStatus.envPasscodeActive
-                      ? 'Enter your administrator email and configured server passcode to access /admin.'
-                      : 'Sign in with your administrator credentials to manage Showroom cars, Used cars, and Quotation requests.'}
-                </p>
+
+            {!authStatus.checked ? (
+              <div className="py-10 text-center text-sm text-[#B4B0A8]">
+                Checking authentication configuration...
               </div>
-
-              {authError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-800">
-                  {authError}
+            ) : (
+              <>
+                <div>
+                  <h1 className="font-display text-2xl font-bold text-white">
+                    {authStatus.needsSetup ? 'Initialize Admin Account' : 'Administrator Sign In'}
+                  </h1>
+                  <p className="mt-1.5 text-sm text-[#B4B0A8] leading-relaxed">
+                    {authStatus.needsSetup
+                      ? 'Create the first administrator credential for this workspace to unlock Fleet Inventory and Quotation Management.'
+                      : authStatus.envPasscodeActive
+                        ? 'Enter your administrator email and configured server passcode to access /admin.'
+                        : 'Sign in with your administrator credentials to manage Showroom cars, Used cars, and Quotation requests.'}
+                  </p>
                 </div>
-              )}
 
-              <form onSubmit={handleAuthSubmit} className="space-y-4">
-                {authStatus.needsSetup && (
-                  <div>
-                    <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                      Administrator Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={setupName}
-                      onChange={(e) => setSetupName(e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-sm border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                    />
+                {authError && (
+                  <div className="p-3 bg-red-950/50 border border-red-500/40 rounded-lg text-sm text-red-200">
+                    {authError}
                   </div>
                 )}
 
-                <div>
-                  <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                    Admin Email
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-sm border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                  />
-                </div>
+                <form onSubmit={handleAuthSubmit} className="space-y-4">
+                  {authStatus.needsSetup && (
+                    <div>
+                      <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                        ADMINISTRATOR NAME
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={setupName}
+                        onChange={(e) => setSetupName(e.target.value)}
+                        className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                      />
+                    </div>
+                  )}
 
-                <div>
-                  <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                    {authStatus.envPasscodeActive
-                      ? 'Server Admin Passcode'
+                  <div>
+                    <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                      ADMIN EMAIL
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                      {authStatus.envPasscodeActive
+                        ? 'SERVER ADMIN PASSCODE'
+                        : authStatus.needsSetup
+                          ? 'CREATE PASSWORD (MIN 8 CHARACTERS)'
+                          : 'PASSWORD'}
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={authStatus.needsSetup ? 8 : 1}
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full py-2.5 text-sm font-semibold text-[#0B0B0D] bg-[#C8A45D] hover:bg-[#DCBC7A] disabled:opacity-60 rounded-lg transition-colors"
+                  >
+                    {authSubmitting
+                      ? 'Verifying...'
                       : authStatus.needsSetup
-                        ? 'Create Password (min 8 characters)'
-                        : 'Password'}
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    minLength={authStatus.needsSetup ? 8 : 1}
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-sm border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                  />
+                        ? 'Create Admin Account & Sign In'
+                        : 'Sign In to Admin Panel'}
+                  </button>
+                </form>
+
+                <div className="pt-4 border-t border-white/[0.08] text-center">
+                  <Link to="/" className="text-xs font-medium text-[#B4B0A8] hover:text-[#C8A45D]">
+                    Return to Jadeer United Public Website
+                  </Link>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={authSubmitting}
-                  className="w-full py-2.5 text-sm font-medium text-white bg-[#3A4338] hover:bg-[#282F27] disabled:opacity-60 rounded-md transition-colors"
-                >
-                  {authSubmitting
-                    ? 'Verifying...'
-                    : authStatus.needsSetup
-                      ? 'Create Admin Account & Sign In'
-                      : 'Sign In to Admin Panel'}
-                </button>
-              </form>
-
-              <div className="pt-4 border-t border-[#ECEEE9] text-center">
-                <Link to="/" className="text-xs font-medium text-[#4D544C] hover:text-[#1B1F1A]">
-                  Return to Jadeer United Public Website
-                </Link>
-              </div>
-            </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
+        </motion.div>
       </div>
     );
   }
 
-  // ============================================================
-  // AUTHENTICATED ADMIN WORKSPACE
-  // ============================================================
   const breadcrumbTitle =
     activeTab === 'dashboard'
       ? 'Dashboard'
@@ -327,14 +345,16 @@ export function AdminPage() {
         ? 'Fleet & Used Inventory'
         : activeTab === 'quotations'
           ? 'Quotation Requests'
-          : 'Contact Messages';
+          : activeTab === 'reviews'
+            ? 'Client Reviews'
+            : 'Contact Messages';
 
   return (
-    <div className="min-h-screen bg-[#F8F8F6] flex flex-col lg:flex-row">
-      {/* Left Workspace Sidebar */}
-      <aside className="w-full lg:w-[252px] bg-[#282F27] text-[#E6E5DF] shrink-0 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-[#3A4338]">
+    <div className="min-h-screen bg-[#0B0B0D] text-[#E4E0D8] flex flex-col lg:flex-row">
+      {/* Left Sidebar */}
+      <aside className="w-full lg:w-[256px] bg-[#111114] text-[#D4D4DC] shrink-0 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-white/[0.08]">
         <div>
-          <div className="h-16 px-6 flex items-center gap-2.5 border-b border-white/10">
+          <div className="h-16 px-6 flex items-center gap-2.5 border-b border-white/[0.08]">
             <JadeerLogoMark className="h-6 w-6" tone="gold" />
             <span className="font-display font-bold text-white tracking-tight whitespace-nowrap">
               Jadeer Admin
@@ -347,6 +367,7 @@ export function AdminPage() {
               { id: 'vehicles' as const, label: 'Vehicles (Showroom & Used)', icon: Car },
               { id: 'quotations' as const, label: 'Quotation Requests', icon: FileText },
               { id: 'messages' as const, label: 'Contact Messages', icon: Mail },
+              { id: 'reviews' as const, label: 'Client Reviews', icon: MessageSquareQuote },
             ].map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -355,10 +376,10 @@ export function AdminPage() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-md transition-colors text-left ${
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors text-left ${
                     isActive
-                      ? 'bg-[#3A4338] text-white'
-                      : 'text-[#C8CBC4] hover:text-white hover:bg-white/5'
+                      ? 'bg-[#C8A45D] text-[#0B0B0D]'
+                      : 'text-[#B4B0A8] hover:text-white hover:bg-white/[0.06]'
                   }`}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
@@ -369,23 +390,23 @@ export function AdminPage() {
           </nav>
         </div>
 
-        <div className="p-4 border-t border-white/10 space-y-3">
+        <div className="p-4 border-t border-white/[0.08] space-y-3">
           <div className="px-2">
             <div className="text-xs font-medium text-white truncate">{adminUser.name}</div>
-            <div className="text-xs text-[#9EA49A] truncate">{adminUser.email}</div>
+            <div className="text-xs text-[#949088] truncate">{adminUser.email}</div>
           </div>
           <div className="flex items-center gap-2">
             <Link
               to="/"
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-[#E6E5DF] bg-white/10 hover:bg-white/15 rounded-md whitespace-nowrap"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-[#E5E5E7] bg-white/[0.06] hover:bg-white/10 rounded-lg whitespace-nowrap"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
+              <ExternalLink className="h-3.5 w-3.5 text-[#C8A45D]" />
               <span>Public Site</span>
             </Link>
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-[#E6E5DF] hover:text-white hover:bg-white/10 rounded-md whitespace-nowrap"
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-[#B4B0A8] hover:text-white hover:bg-white/[0.06] rounded-lg whitespace-nowrap"
               title="Sign out"
             >
               <LogOut className="h-3.5 w-3.5" />
@@ -397,12 +418,11 @@ export function AdminPage() {
 
       {/* Main Viewport */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Bar Contract for Dashboard */}
-        <header className="h-16 bg-white border-b border-[#E3E5E0] px-6 lg:px-8 flex items-center justify-between gap-4">
-          <div className="text-sm text-[#5E6B5B] truncate">
+        <header className="h-16 bg-[#111114] border-b border-white/[0.08] px-6 lg:px-8 flex items-center justify-between gap-4">
+          <div className="text-sm text-[#B4B0A8] truncate">
             <span>Admin</span>
-            <span className="mx-2">/</span>
-            <span className="font-semibold text-[#1B1F1A]">{breadcrumbTitle}</span>
+            <span className="mx-2 text-[#8F8B84]">/</span>
+            <span className="font-semibold text-white">{breadcrumbTitle}</span>
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -413,7 +433,7 @@ export function AdminPage() {
                   setEditingVehicle(null);
                   setVehicleModalOpen(true);
                 }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-[#3A4338] hover:bg-[#282F27] rounded-md whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#0B0B0D] bg-[#C8A45D] hover:bg-[#DCBC7A] rounded-lg whitespace-nowrap shrink-0"
               >
                 <Plus className="h-4 w-4" />
                 <span>Add Vehicle</span>
@@ -423,39 +443,41 @@ export function AdminPage() {
         </header>
 
         <div className="p-6 lg:p-8 flex-1 space-y-8">
-          {/* ================= DASHBOARD TAB ================= */}
+          {/* DASHBOARD */}
           {activeTab === 'dashboard' && (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
-                  { label: 'Total Showroom Cars', value: stats?.totalShowroom ?? '—', tab: 'vehicles' as const },
-                  { label: 'Total Used Cars', value: stats?.totalUsed ?? '—', tab: 'vehicles' as const },
-                  { label: 'Total Quotation Requests', value: stats?.totalQuotations ?? '—', tab: 'quotations' as const },
-                  { label: 'New / Pending Quotations', value: stats?.pendingQuotations ?? '—', tab: 'quotations' as const },
+                  { label: 'Showroom Cars', value: stats?.totalShowroom ?? '—', tab: 'vehicles' as const },
+                  { label: 'Certified Used Cars', value: stats?.totalUsed ?? '—', tab: 'vehicles' as const },
+                  { label: 'Quotation Requests', value: stats?.totalQuotations ?? '—', tab: 'quotations' as const },
+                  { label: 'New / Pending Quotes', value: stats?.pendingQuotations ?? '—', tab: 'quotations' as const },
+                  { label: 'Client Reviews', value: stats?.totalReviews ?? '—', tab: 'reviews' as const },
                 ].map((kpi) => (
-                  <button
+                  <motion.button
                     key={kpi.label}
                     type="button"
+                    whileHover={{ y: -2 }}
                     onClick={() => setActiveTab(kpi.tab)}
-                    className="text-left bg-white border border-[#E3E5E0] hover:border-[#9A8A6E] rounded-lg p-5 transition-colors"
+                    className="text-left bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl p-5 transition-colors"
                   >
-                    <div className="text-xs text-[#5E6B5B]">{kpi.label}</div>
-                    <div className="mt-2 font-mono tabular-nums text-3xl font-bold text-[#1B1F1A]">
+                    <div className="text-xs text-[#B4B0A8]">{kpi.label}</div>
+                    <div className="mt-2 font-mono tabular-nums text-3xl font-bold text-[#C8A45D]">
                       {kpi.value}
                     </div>
-                  </button>
+                  </motion.button>
                 ))}
               </div>
 
-              <div className="bg-white border border-[#E3E5E0] rounded-lg overflow-hidden">
-                <div className="px-6 py-4 border-b border-[#E3E5E0] flex items-center justify-between">
-                  <h2 className="font-display text-base font-semibold text-[#1B1F1A]">
+              <div className="bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
+                <div className="px-6 py-4 border-b border-white/[0.08] flex items-center justify-between">
+                  <h2 className="font-display text-base font-semibold text-white">
                     Recent Quotation Requests
                   </h2>
                   <button
                     type="button"
                     onClick={() => setActiveTab('quotations')}
-                    className="text-xs font-medium text-[#3A4338] hover:underline"
+                    className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
                   >
                     Manage all requests
                   </button>
@@ -463,7 +485,7 @@ export function AdminPage() {
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-[#F8F8F6] text-xs text-[#5E6B5B] border-b border-[#E3E5E0]">
+                    <thead className="bg-[#101014] text-xs text-[#B4B0A8] border-b border-white/[0.08]">
                       <tr>
                         <th className="py-3 px-4 font-medium">Reference</th>
                         <th className="py-3 px-4 font-medium">Client / Company</th>
@@ -473,22 +495,22 @@ export function AdminPage() {
                         <th className="py-3 px-4 font-medium text-right">Action</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#ECEEE9]">
+                    <tbody className="divide-y divide-white/[0.06]">
                       {recentQuotations.map((q) => (
-                        <tr key={q.id} className="hover:bg-[#FAFBF9]">
-                          <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#4D544C]">
+                        <tr key={q.id} className="hover:bg-white/[0.02]">
+                          <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#C8A45D]">
                             {q.reference_code}
                           </td>
                           <td className="py-3 px-4">
-                            <div className="font-medium text-[#1B1F1A]">{q.full_name}</div>
-                            <div className="text-xs text-[#5E6B5B]">
+                            <div className="font-medium text-white">{q.full_name}</div>
+                            <div className="text-xs text-[#B4B0A8]">
                               {q.company_name || 'Individual'} · {q.vehicle_label || q.offer_title || 'General Fleet'}
                             </div>
                           </td>
-                          <td className="py-3 px-4 text-[#4D544C]">
+                          <td className="py-3 px-4 text-[#D4D4DC]">
                             {q.country} · {q.city}
                           </td>
-                          <td className="py-3 px-4 text-right font-mono tabular-nums text-[#1B1F1A]">
+                          <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
                             {q.fleet_quantity} × {q.lease_term_months}m
                           </td>
                           <td className={`py-3 px-4 text-xs font-medium ${QUOTATION_STATUS_TEXT[q.status].color}`}>
@@ -498,7 +520,7 @@ export function AdminPage() {
                             <button
                               type="button"
                               onClick={() => setSelectedQuotation(q)}
-                              className="text-xs font-medium text-[#3A4338] hover:underline"
+                              className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
                             >
                               Review
                             </button>
@@ -512,11 +534,11 @@ export function AdminPage() {
             </>
           )}
 
-          {/* ================= VEHICLES TAB ================= */}
+          {/* VEHICLES */}
           {activeTab === 'vehicles' && (
             <div className="space-y-5">
-              <div className="bg-white border border-[#E3E5E0] rounded-lg p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-1 p-1 bg-[#F1F2EE] rounded-md w-fit">
+              <div className="bg-[#141418] border border-white/[0.08] rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-1 p-1 bg-[#0C0C0F] border border-white/[0.08] rounded-lg w-fit">
                   {(
                     [
                       { id: 'all', label: 'All Cars' },
@@ -528,10 +550,10 @@ export function AdminPage() {
                       key={f.id}
                       type="button"
                       onClick={() => setVehicleFilterType(f.id)}
-                      className={`px-3.5 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                      className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                         vehicleFilterType === f.id
-                          ? 'bg-[#3A4338] text-white'
-                          : 'text-[#4D544C] hover:text-[#1B1F1A]'
+                          ? 'bg-[#C8A45D] text-[#0B0B0D]'
+                          : 'text-[#B4B0A8] hover:text-white'
                       }`}
                     >
                       {f.label}
@@ -540,21 +562,21 @@ export function AdminPage() {
                 </div>
 
                 <div className="relative w-full md:w-72">
-                  <Search className="h-4 w-4 text-[#6B7369] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Search className="h-4 w-4 text-[#949088] absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={vehicleSearch}
                     onChange={(e) => setVehicleSearch(e.target.value)}
                     placeholder="Filter make, model, category..."
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-[#F8F8F6] border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338] focus:bg-white"
+                    className="w-full pl-9 pr-3 py-2 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#8F8B84] focus:outline-none focus:border-[#C8A45D]"
                   />
                 </div>
               </div>
 
-              <div className="bg-white border border-[#E3E5E0] rounded-lg overflow-hidden">
+              <div className="bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-[#F8F8F6] text-xs text-[#5E6B5B] border-b border-[#E3E5E0]">
+                    <thead className="bg-[#101014] text-xs text-[#B4B0A8] border-b border-white/[0.08]">
                       <tr>
                         <th className="py-3 px-4 font-medium">Vehicle</th>
                         <th className="py-3 px-4 font-medium">Section</th>
@@ -565,25 +587,25 @@ export function AdminPage() {
                         <th className="py-3 px-4 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#ECEEE9]">
+                    <tbody className="divide-y divide-white/[0.06]">
                       {loadingData && vehicles.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-8 text-center text-sm text-[#5E6B5B]">
+                          <td colSpan={7} className="py-8 text-center text-sm text-[#B4B0A8]">
                             Loading vehicles...
                           </td>
                         </tr>
                       ) : vehicles.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-10 text-center text-sm text-[#5E6B5B]">
+                          <td colSpan={7} className="py-10 text-center text-sm text-[#B4B0A8]">
                             No vehicles match the active filter.
                           </td>
                         </tr>
                       ) : (
                         vehicles.map((v) => (
-                          <tr key={v.id} className="hover:bg-[#FAFBF9]">
+                          <tr key={v.id} className="hover:bg-white/[0.02]">
                             <td className="py-3 px-4">
                               <div className="flex items-center gap-3">
-                                <div className="h-11 w-16 rounded overflow-hidden bg-[#282F27] shrink-0">
+                                <div className="h-11 w-16 rounded overflow-hidden bg-[#1B1B20] shrink-0">
                                   <VehicleImage
                                     src={v.image_url}
                                     alt={`${v.make} ${v.model}`}
@@ -591,22 +613,22 @@ export function AdminPage() {
                                   />
                                 </div>
                                 <div>
-                                  <div className="font-medium text-[#1B1F1A]">
+                                  <div className="font-medium text-white">
                                     {v.year} {v.make} {v.model}
                                   </div>
-                                  <div className="text-xs text-[#5E6B5B]">
+                                  <div className="text-xs text-[#B4B0A8]">
                                     {v.country_availability.join(' / ')}
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-xs font-medium text-[#4D544C]">
+                            <td className="py-3 px-4 text-xs font-medium text-[#D4D4DC]">
                               {v.listing_type === 'showroom' ? 'Showroom' : 'Used Cars'}
                             </td>
-                            <td className="py-3 px-4 text-xs text-[#5E6B5B]">
+                            <td className="py-3 px-4 text-xs text-[#B4B0A8]">
                               {v.category} · {v.fuel_type} · {v.transmission}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono tabular-nums font-medium text-[#1B1F1A]">
+                            <td className="py-3 px-4 text-right font-mono tabular-nums font-medium text-[#C8A45D]">
                               {v.currency} {v.price_or_monthly_rate.toLocaleString()}
                               {v.listing_type === 'showroom' ? '/mo' : ''}
                             </td>
@@ -618,7 +640,7 @@ export function AdminPage() {
                                     status: e.target.value as VehicleStatus,
                                   })
                                 }
-                                className="px-2 py-1 text-xs border border-[#D8DBD4] rounded bg-white text-[#1B1F1A]"
+                                className="px-2 py-1 text-xs border border-white/10 rounded bg-[#0C0C0F] text-white"
                               >
                                 <option value="available">Available</option>
                                 <option value="reserved">Reserved</option>
@@ -632,10 +654,10 @@ export function AdminPage() {
                                 onClick={() =>
                                   handleQuickVehicleUpdate(v.id, { is_featured: !v.is_featured })
                                 }
-                                className={`inline-flex items-center justify-center h-8 w-8 rounded-md transition-colors ${
+                                className={`inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
                                   v.is_featured
-                                    ? 'text-[#9A8A6E] bg-[#F6F3EC]'
-                                    : 'text-[#B5BAB1] hover:text-[#4D544C]'
+                                    ? 'text-[#C8A45D] bg-[#1D1B15]'
+                                    : 'text-[#5B5B66] hover:text-[#B4B0A8]'
                                 }`}
                                 title={v.is_featured ? 'Unfeature vehicle' : 'Feature on homepage'}
                               >
@@ -651,14 +673,14 @@ export function AdminPage() {
                                   <button
                                     type="button"
                                     onClick={() => handleDeleteVehicle(v.id)}
-                                    className="px-2 py-1 text-xs font-medium text-white bg-red-700 rounded"
+                                    className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded"
                                   >
                                     Delete
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => setConfirmDeleteVehicleId(null)}
-                                    className="px-2 py-1 text-xs text-[#4D544C] border border-[#D8DBD4] rounded"
+                                    className="px-2 py-1 text-xs text-[#B4B0A8] border border-white/15 rounded"
                                   >
                                     Cancel
                                   </button>
@@ -671,7 +693,7 @@ export function AdminPage() {
                                       setEditingVehicle(v);
                                       setVehicleModalOpen(true);
                                     }}
-                                    className="h-8 w-8 inline-flex items-center justify-center text-[#4D544C] hover:text-[#1B1F1A] hover:bg-[#F1F2EE] rounded"
+                                    className="h-8 w-8 inline-flex items-center justify-center text-[#B4B0A8] hover:text-[#C8A45D] hover:bg-white/[0.06] rounded-lg"
                                     title="Edit vehicle"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
@@ -679,7 +701,7 @@ export function AdminPage() {
                                   <button
                                     type="button"
                                     onClick={() => setConfirmDeleteVehicleId(v.id)}
-                                    className="h-8 w-8 inline-flex items-center justify-center text-[#4D544C] hover:text-red-700 hover:bg-red-50 rounded"
+                                    className="h-8 w-8 inline-flex items-center justify-center text-[#B4B0A8] hover:text-red-400 hover:bg-red-950/30 rounded-lg"
                                     title="Delete vehicle"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -697,25 +719,25 @@ export function AdminPage() {
             </div>
           )}
 
-          {/* ================= QUOTATIONS TAB ================= */}
+          {/* QUOTATIONS */}
           {activeTab === 'quotations' && (
             <div className="space-y-5">
-              <div className="bg-white border border-[#E3E5E0] rounded-lg p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+              <div className="bg-[#141418] border border-white/[0.08] rounded-xl p-4 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
                 <div className="md:col-span-5 relative">
-                  <Search className="h-4 w-4 text-[#6B7369] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Search className="h-4 w-4 text-[#949088] absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     value={quoteSearch}
                     onChange={(e) => setQuoteSearch(e.target.value)}
                     placeholder="Search client name, company, email, ref..."
-                    className="w-full pl-9 pr-3 py-2 text-sm bg-[#F8F8F6] border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338] focus:bg-white"
+                    className="w-full pl-9 pr-3 py-2 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#8F8B84] focus:outline-none focus:border-[#C8A45D]"
                   />
                 </div>
                 <div className="md:col-span-4">
                   <select
                     value={quoteStatusFilter}
                     onChange={(e) => setQuoteStatusFilter(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-[#D8DBD4] rounded-md bg-white"
+                    className="w-full px-3 py-2 text-sm border border-white/10 rounded-lg bg-[#0C0C0F] text-white"
                   >
                     <option value="all">All Statuses</option>
                     <option value="new">New</option>
@@ -730,7 +752,7 @@ export function AdminPage() {
                   <select
                     value={quoteCountryFilter}
                     onChange={(e) => setQuoteCountryFilter(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-[#D8DBD4] rounded-md bg-white"
+                    className="w-full px-3 py-2 text-sm border border-white/10 rounded-lg bg-[#0C0C0F] text-white"
                   >
                     <option value="all">All Countries</option>
                     <option value="Bahrain">Bahrain</option>
@@ -740,10 +762,10 @@ export function AdminPage() {
                 </div>
               </div>
 
-              <div className="bg-white border border-[#E3E5E0] rounded-lg overflow-hidden">
+              <div className="bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-[#F8F8F6] text-xs text-[#5E6B5B] border-b border-[#E3E5E0]">
+                    <thead className="bg-[#101014] text-xs text-[#B4B0A8] border-b border-white/[0.08]">
                       <tr>
                         <th className="py-3 px-4 font-medium">Reference</th>
                         <th className="py-3 px-4 font-medium">Client &amp; Organization</th>
@@ -754,34 +776,34 @@ export function AdminPage() {
                         <th className="py-3 px-4 font-medium text-right">Action</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#ECEEE9]">
+                    <tbody className="divide-y divide-white/[0.06]">
                       {quotations.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-10 text-center text-sm text-[#5E6B5B]">
+                          <td colSpan={7} className="py-10 text-center text-sm text-[#B4B0A8]">
                             No quotation requests found matching your criteria.
                           </td>
                         </tr>
                       ) : (
                         quotations.map((q) => (
-                          <tr key={q.id} className="hover:bg-[#FAFBF9]">
-                            <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#4D544C]">
+                          <tr key={q.id} className="hover:bg-white/[0.02]">
+                            <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#C8A45D]">
                               {q.reference_code}
                             </td>
                             <td className="py-3 px-4">
-                              <div className="font-medium text-[#1B1F1A]">{q.full_name}</div>
-                              <div className="text-xs text-[#5E6B5B]">
+                              <div className="font-medium text-white">{q.full_name}</div>
+                              <div className="text-xs text-[#B4B0A8]">
                                 {q.company_name || 'Individual'} · {q.email}
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-xs text-[#4D544C]">
+                            <td className="py-3 px-4 text-xs text-[#D4D4DC]">
                               {q.country} · {q.city}
                             </td>
-                            <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-[#1B1F1A]">
+                            <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-white">
                               {q.fleet_quantity} · {q.lease_term_months}m
                             </td>
-                            <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-[#1B1F1A]">
+                            <td className="py-3 px-4 text-right font-mono tabular-nums text-xs text-[#C8A45D]">
                               {q.estimated_monthly_quote !== null
-                                ? `BHD ${q.estimated_monthly_quote.toLocaleString()}`
+                                ? `SAR ${q.estimated_monthly_quote.toLocaleString()}`
                                 : '—'}
                             </td>
                             <td className={`py-3 px-4 text-xs font-medium ${QUOTATION_STATUS_TEXT[q.status].color}`}>
@@ -791,7 +813,7 @@ export function AdminPage() {
                               <button
                                 type="button"
                                 onClick={() => setSelectedQuotation(q)}
-                                className="px-3 py-1.5 text-xs font-medium text-[#3A4338] border border-[#D8DBD4] hover:bg-[#F8F8F6] rounded"
+                                className="px-3 py-1.5 text-xs font-medium text-[#C8A45D] border border-white/15 hover:border-[#C8A45D]/50 rounded-md"
                               >
                                 Manage
                               </button>
@@ -806,31 +828,32 @@ export function AdminPage() {
             </div>
           )}
 
-          {/* ================= MESSAGES TAB ================= */}
+          {/* MESSAGES */}
           {activeTab === 'messages' && (
-            <div className="bg-white border border-[#E3E5E0] rounded-lg divide-y divide-[#ECEEE9]">
+            <div className="bg-[#141418] border border-white/[0.08] rounded-xl divide-y divide-white/[0.08]">
               {messages.length === 0 ? (
-                <div className="p-10 text-center text-sm text-[#5E6B5B]">
+                <div className="p-10 text-center text-sm text-[#B4B0A8]">
                   No contact messages received yet.
                 </div>
               ) : (
                 messages.map((m) => (
                   <div key={m.id} className="p-6 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                     <div className="space-y-1.5">
-                      <div className="text-xs text-[#5E6B5B]">
-                        {m.department} · {m.country} · {m.created_at} ·{' '}
-                        <span className={m.status === 'unread' ? 'text-[#B45309] font-medium' : 'text-[#5E6B5B]'}>
+                      <div className="text-xs text-[#B4B0A8]">
+                        <span className="text-[#C8A45D]">{m.department}</span> · {m.country} ·{' '}
+                        {m.created_at} ·{' '}
+                        <span className={m.status === 'unread' ? 'text-[#FBBF24] font-medium' : 'text-[#B4B0A8]'}>
                           {m.status}
                         </span>
                       </div>
-                      <h3 className="font-display text-base font-semibold text-[#1B1F1A]">
+                      <h3 className="font-display text-base font-semibold text-white">
                         {m.subject}
                       </h3>
-                      <div className="text-xs text-[#4D544C]">
+                      <div className="text-xs text-[#B4B0A8]">
                         From {m.full_name} {m.company_name ? `(${m.company_name})` : ''} · {m.email} ·{' '}
                         <span className="font-mono">{m.phone}</span>
                       </div>
-                      <p className="mt-2 text-sm text-[#282F27] leading-relaxed">{m.message}</p>
+                      <p className="mt-2 text-sm text-[#D4D4DC] leading-relaxed">{m.message}</p>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
@@ -843,7 +866,7 @@ export function AdminPage() {
                               prev.map((item) => (item.id === m.id ? { ...item, status: 'read' } : item))
                             );
                           }}
-                          className="px-3 py-1.5 text-xs font-medium text-[#3A4338] border border-[#D8DBD4] rounded hover:bg-[#F8F8F6]"
+                          className="px-3 py-1.5 text-xs font-medium text-[#C8A45D] border border-white/15 rounded-md hover:border-[#C8A45D]/50"
                         >
                           Mark Read
                         </button>
@@ -859,9 +882,98 @@ export function AdminPage() {
                               )
                             );
                           }}
-                          className="px-3 py-1.5 text-xs font-medium text-[#5E6B5B] border border-[#D8DBD4] rounded hover:bg-[#F8F8F6]"
+                          className="px-3 py-1.5 text-xs font-medium text-[#B4B0A8] border border-white/10 rounded-md hover:text-white"
                         >
                           Archive
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* CLIENT REVIEWS */}
+          {activeTab === 'reviews' && (
+            <div className="bg-[#141418] border border-white/[0.08] rounded-xl divide-y divide-white/[0.08]">
+              {loadingData && reviews.length === 0 ? (
+                <div className="p-10 text-center text-sm text-[#B4B0A8]">
+                  Loading corporate client reviews...
+                </div>
+              ) : reviews.length === 0 ? (
+                <div className="p-10 text-center text-sm text-[#B4B0A8]">
+                  No corporate client reviews recorded yet.
+                </div>
+              ) : (
+                reviews.map((rev) => (
+                  <div
+                    key={rev.id}
+                    className="p-6 flex flex-col sm:flex-row sm:items-start justify-between gap-4"
+                  >
+                    <div className="space-y-2 max-w-3xl">
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-[#B4B0A8]">
+                        <span className="font-semibold text-[#C8A45D]">{rev.company}</span>
+                        <span>·</span>
+                        <span className="font-mono tabular-nums">{rev.date_of_service}</span>
+                        <span>·</span>
+                        <span className="font-mono tabular-nums text-white">
+                          Overall {rev.overall}/5
+                        </span>
+                        <span>·</span>
+                        <span className={rev.would_recommend ? 'text-[#4ADE80]' : 'text-[#B4B0A8]'}>
+                          {rev.would_recommend ? 'Would Recommend' : 'Neutral'}
+                        </span>
+                      </div>
+                      <div className="text-sm font-medium text-white">
+                        {rev.employee}
+                        {rev.position ? (
+                          <span className="text-[#B4B0A8] font-normal"> — {rev.position}</span>
+                        ) : null}
+                      </div>
+                      <p className="text-sm text-[#D4D4DC] leading-relaxed whitespace-pre-line">
+                        {rev.comment || 'No written remarks provided.'}
+                      </p>
+                      <div className="pt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono tabular-nums text-[#949088]">
+                        <span>Vehicle: {rev.vehicle_condition}/5</span>
+                        <span>Staff: {rev.staff_behavior}/5</span>
+                        <span>Pickup: {rev.pickup_process}/5</span>
+                        <span>Dropoff: {rev.dropoff_process}/5</span>
+                        <span>Cleanliness: {rev.cleanliness}/5</span>
+                        <span>Value: {rev.value_for_money}/5</span>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      {confirmDeleteReviewId === rev.id ? (
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await api.deleteAdminReview(rev.id);
+                              setReviews((prev) => prev.filter((item) => item.id !== rev.id));
+                              setConfirmDeleteReviewId(null);
+                            }}
+                            className="px-2.5 py-1.5 text-xs font-medium text-white bg-red-600 rounded"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteReviewId(null)}
+                            className="px-2.5 py-1.5 text-xs text-[#B4B0A8] border border-white/15 rounded"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteReviewId(rev.id)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#B4B0A8] hover:text-red-400 border border-white/10 hover:border-red-500/40 rounded-md transition-colors"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Remove</span>
                         </button>
                       )}
                     </div>
@@ -873,7 +985,6 @@ export function AdminPage() {
         </div>
       </div>
 
-      {/* Modals */}
       {vehicleModalOpen && (
         <VehicleFormModal
           vehicle={editingVehicle}

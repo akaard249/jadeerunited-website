@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { motion } from 'motion/react';
 import { ArrowRight, Check } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Offer } from '../types';
 import { VehicleImage } from '../components/BrandMark';
+import { useLanguage } from '../context/LanguageContext';
+import {
+  AmbientGoldBackdrop,
+  GoldGlowCard,
+  StaggerGroup,
+  StaggerItem,
+} from '../components/MotionPrimitives';
 
 export function OffersPage() {
+  const { pick } = useLanguage();
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,99 +35,122 @@ export function OffersPage() {
   }, []);
 
   return (
-    <div className="bg-[#F8F8F6] min-h-[70vh]">
-      <section className="bg-white border-b border-[#E3E5E0]">
-        <div className="max-w-[1280px] mx-auto px-6 lg:px-8 py-12">
-          <p className="text-sm font-medium text-[#7B6C53]">Promotional &amp; Corporate Fleet Packages</p>
-          <h1 className="mt-2 font-display text-3xl lg:text-4xl font-bold tracking-tight text-[#1B1F1A]">
-            Active Leasing &amp; Rental Offers
+    <div className="bg-[#0B0B0D] min-h-[75vh] text-[#E4E0D8]">
+      <section className="relative bg-[#0E0E11] border-b border-white/[0.08]">
+        <AmbientGoldBackdrop />
+        <div className="relative z-10 max-w-[1280px] mx-auto px-6 lg:px-8 py-12">
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#C8A45D]">
+            {pick('PROMOTIONAL & CORPORATE FLEET PACKAGES', 'العروض الترويجية وباقات أساطيل الشركات')}
+          </p>
+          <h1 className="mt-2 font-display text-3xl lg:text-4xl font-bold tracking-tight text-white">
+            {pick('Active Leasing & Rental Offers', 'عروض التأجير التشغيلي والسيارات المستعملة')}
           </h1>
-          <p className="mt-3 text-sm text-[#4D544C] max-w-2xl leading-relaxed">
-            Structured fleet programs across Bahrain, Saudi Arabia, and Oman designed for Vision
-            2030 hybrid transitions, EPC project mobilizations, executive retainers, and certified
-            used acquisitions.
+          <p className="mt-3 text-sm text-[#B4B0A8] max-w-2xl leading-relaxed">
+            {pick(
+              'Structured fleet programs across Bahrain, Saudi Arabia, and Oman designed for Vision 2030 hybrid transitions, EPC project mobilizations, executive retainers, and certified used acquisitions.',
+              'برامج أساطيل متكاملة في البحرين والمملكة العربية السعودية وعُمان مصممة للتحول الهجين وفق رؤية 2030 ومشاريع المقاولات والسيارات المستعملة المعتمدة.'
+            )}
           </p>
         </div>
       </section>
 
-      <section className="max-w-[1280px] mx-auto px-6 lg:px-8 py-12 space-y-6">
+      <section className="max-w-[1280px] mx-auto px-6 lg:px-8 py-12">
         {loading ? (
           <div className="space-y-6">
-            {[1, 2].map((n) => (
-              <div key={n} className="h-64 bg-white border border-[#E3E5E0] rounded-lg animate-pulse" />
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="h-64 bg-[#141418] border border-white/[0.08] rounded-xl animate-pulse" />
             ))}
           </div>
         ) : (
-          offers.map((offer) => (
-            <article
-              key={offer.id}
-              className="bg-white border border-[#E3E5E0] rounded-lg overflow-hidden grid grid-cols-1 lg:grid-cols-12 items-stretch"
-            >
-              <div className="lg:col-span-4 bg-[#282F27] min-h-[240px]">
-                <VehicleImage
-                  src={offer.image_url}
-                  alt={offer.title}
-                  className="w-full h-full object-cover"
-                  objectPosition={offer.image_url.includes('land-cruiser-gr') ? 'object-bottom' : 'object-center'}
-                />
-              </div>
+          <StaggerGroup className="space-y-6">
+            {offers.map((offer) => {
+              const title = pick(offer.title, offer.title_ar);
+              const description = pick(offer.description, offer.description_ar);
+              const quoteQuery = offer.vehicle_id
+                ? `/quotation?offer=${offer.id}&vehicle=${offer.vehicle_id}`
+                : `/quotation?offer=${offer.id}`;
 
-              <div className="lg:col-span-8 p-7 lg:p-8 flex flex-col justify-between gap-6">
-                <div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#5E6B5B]">
-                    <span>
-                      {offer.category} · {offer.countries.join(' / ')}
-                    </span>
-                    <span className="font-mono tabular-nums">Valid until {offer.valid_until}</span>
-                  </div>
+              return (
+                <StaggerItem key={offer.id}>
+                  <GoldGlowCard className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
+                    <div className="lg:col-span-4 bg-[#141418] min-h-[240px] overflow-hidden relative">
+                      <VehicleImage
+                        src={offer.image_url}
+                        alt={title}
+                        className="w-full h-full object-cover"
+                        objectPosition={offer.image_url.includes('land-cruiser-gr') ? 'object-bottom' : 'object-center'}
+                      />
+                    </div>
 
-                  <h2 className="mt-2 font-display text-2xl font-bold text-[#1B1F1A]">
-                    {offer.title}
-                  </h2>
-                  <p className="mt-2 text-sm text-[#4D544C] leading-relaxed">{offer.description}</p>
-
-                  <ul className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {offer.highlights.map((h) => (
-                      <li key={h} className="flex items-start gap-2 text-sm text-[#1B1F1A]">
-                        <Check className="h-4 w-4 text-[#3A4338] shrink-0 mt-0.5" />
-                        <span>{h}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="pt-5 border-t border-[#ECEEE9] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    {offer.monthly_rate_from && (
-                      <>
-                        <div className="text-xs text-[#5E6B5B]">
-                          {offer.category === 'Used Car Sales'
-                            ? 'Certified fleet units starting from'
-                            : 'Corporate package starting from'}
+                    <div className="lg:col-span-8 p-7 lg:p-8 flex flex-col justify-between gap-6">
+                      <div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#B4B0A8]">
+                          <span className="text-[#C8A45D]">
+                            {offer.category} · {offer.countries.join(' / ')}
+                          </span>
+                          <span className="font-mono tabular-nums">
+                            {pick('Valid until', 'صالح حتى')} {offer.valid_until}
+                          </span>
                         </div>
-                        <div className="font-mono tabular-nums text-xl font-bold text-[#1B1F1A]">
-                          {offer.currency} {offer.monthly_rate_from.toLocaleString()}
-                          {offer.category !== 'Used Car Sales' && (
-                            <span className="text-xs font-sans font-normal text-[#5E6B5B]"> / month</span>
+
+                        <h2 className="mt-2 font-display text-2xl font-bold text-white">
+                          {title}
+                        </h2>
+                        <p className="mt-2 text-sm text-[#B4B0A8] leading-relaxed">
+                          {description}
+                        </p>
+
+                        <ul className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {offer.highlights.map((h) => (
+                            <li key={h} className="flex items-start gap-2 text-sm text-[#E5E5E7]">
+                              <Check className="h-4 w-4 text-[#C8A45D] shrink-0 mt-0.5" />
+                              <span>{h}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="pt-5 border-t border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div>
+                          {offer.monthly_rate_from && (
+                            <>
+                              <div className="text-xs text-[#949088]">
+                                {offer.category === 'Used Car Sales'
+                                  ? pick('Certified fleet units starting from', 'سيارات أسطول معتمدة تبدأ من')
+                                  : pick('Corporate package starting from', 'باقات الشركات تبدأ من')}
+                              </div>
+                              <div className="font-mono tabular-nums text-xl font-bold text-[#C8A45D]">
+                                {offer.currency} {offer.monthly_rate_from.toLocaleString()}
+                                {offer.category !== 'Used Car Sales' && (
+                                  <span className="text-xs font-sans font-normal text-[#B4B0A8]">
+                                    {' '}
+                                    / {pick('month', 'شهر')}
+                                  </span>
+                                )}
+                              </div>
+                            </>
                           )}
                         </div>
-                      </>
-                    )}
-                  </div>
 
-                  <Link
-                    to={`/quotation?offer=${offer.id}`}
-                    className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[#3A4338] hover:bg-[#282F27] rounded-md transition-colors whitespace-nowrap shrink-0"
-                  >
-                    <span>Request Offer Quotation</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </div>
-              </div>
-            </article>
-          ))
+                        <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}>
+                          <Link
+                            to={quoteQuery}
+                            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold text-[#0B0B0D] bg-[#C8A45D] hover:bg-[#DCBC7A] rounded-lg transition-colors whitespace-nowrap shrink-0"
+                          >
+                            <span>{pick('Request Offer Quotation', 'اطلب عرض سعر للباقة')}</span>
+                            <ArrowRight className="h-4 w-4" />
+                          </Link>
+                        </motion.div>
+                      </div>
+                    </div>
+                  </GoldGlowCard>
+                </StaggerItem>
+              );
+            })}
+          </StaggerGroup>
         )}
       </section>
     </div>
   );
 }
+

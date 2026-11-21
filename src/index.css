@@ -1,37 +1,118 @@
 @import "tailwindcss";
 
 @theme {
-  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-display: "Outfit", "IBM Plex Sans Arabic", system-ui, -apple-system, sans-serif;
+  --font-sans: "Manrope", "IBM Plex Sans Arabic", system-ui, -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --color-olive-950: #1B1F1A;
-  --color-olive-900: #282F27;
-  --color-olive-800: #3A4338;
-  --color-olive-700: #4A5548;
-  --color-olive-600: #5E6B5B;
-  --color-gold-600: #7B6C53;
-  --color-gold-500: #9A8A6E;
-  --color-gold-400: #B5A486;
-  --color-gold-200: #DDD3C0;
-  --color-canvas: #F8F8F6;
-  --color-surface: #FFFFFF;
-  --color-hairline: #E3E5E0;
+  /* Soften dark-mode glare: warm alabaster white & calmer heading weights */
+  --color-white: #EAE7E0;
+  --font-weight-semibold: 500;
+  --font-weight-bold: 600;
+  --font-weight-extrabold: 600;
+
+  --color-obsidian-950: #0B0B0D;
+  --color-obsidian-900: #111114;
+  --color-obsidian-850: #151519;
+  --color-obsidian-800: #1B1B20;
+  --color-gold-600: #A6843E;
+  --color-gold-500: #C8A45D;
+  --color-gold-400: #DCBC7A;
+  --color-gold-300: #EBD4A0;
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
     scroll-behavior: smooth;
+    background-color: #0B0B0D;
+    color: #E4E0D8;
+    color-scheme: dark;
+    line-height: 1.65;
+    letter-spacing: 0.01em;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html[dir="rtl"] {
+    font-family: "IBM Plex Sans Arabic", var(--font-sans);
+    line-height: 1.8;
+    letter-spacing: 0;
   }
 
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  p, li, dd {
+    line-height: 1.7;
   }
 
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+}
+
+/* Signature outlined gold display typography softened for comfortable dark-mode viewing */
+.text-gold-outline {
+  color: transparent;
+  -webkit-text-stroke: 1.2px rgba(210, 178, 118, 0.82);
+}
+
+@keyframes gold-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.gold-top-accent {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(200, 164, 93, 0.25) 25%,
+    rgba(220, 188, 122, 0.85) 50%,
+    rgba(200, 164, 93, 0.25) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: gold-shimmer 7s linear infinite;
+}
+
+@keyframes ambient-float {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translate3d(0, -14px, 0) scale(1.06);
+    opacity: 0.72;
+  }
+}
+
+.ambient-gold-orb {
+  animation: ambient-float 10s ease-in-out infinite;
+}
+
+/* Custom sleek dark scrollbars for location directory & tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111114;
+}
+::-webkit-scrollbar-thumb {
+  background: #2C2C34;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #C8A45D;
 }
 
 @media (prefers-reduced-motion: reduce) {

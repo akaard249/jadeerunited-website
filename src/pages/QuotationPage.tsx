@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { motion } from 'motion/react';
 import { CheckCircle2, ArrowRight } from 'lucide-react';
 import { api } from '../lib/api';
 import { BRAND } from '../data/brand';
 import type { Offer, QuotationAddOns, QuotationRequestRecord, Vehicle } from '../types';
+import { AmbientGoldBackdrop, Reveal } from '../components/MotionPrimitives';
 
 const ADD_ON_OPTIONS: Array<{ key: keyof QuotationAddOns; label: string; detail: string }> = [
   {
@@ -48,9 +50,10 @@ export function QuotationPage() {
   const [clientType, setClientType] = useState<'corporate' | 'individual'>('corporate');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [country, setCountry] = useState<'Bahrain' | 'Saudi Arabia' | 'Oman'>('Bahrain');
+  const [country, setCountry] = useState<'Bahrain' | 'Saudi Arabia' | 'Oman'>('Saudi Arabia');
   const [city, setCity] = useState('');
   const [vehicleId, setVehicleId] = useState<string>(searchParams.get('vehicle') || '');
+  const [selectedTrim, setSelectedTrim] = useState<string>(searchParams.get('trim') || '');
   const [offerId, setOfferId] = useState<string>(searchParams.get('offer') || '');
   const [fleetQuantity, setFleetQuantity] = useState(1);
   const [leaseTermMonths, setLeaseTermMonths] = useState(36);
@@ -84,6 +87,18 @@ export function QuotationPage() {
     setAddOns((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const selectedVehicle = vehicles.find((v) => String(v.id) === vehicleId) || null;
+
+  const handleVehicleChange = (nextId: string) => {
+    setVehicleId(nextId);
+    const nextV = vehicles.find((v) => String(v.id) === nextId);
+    if (nextV?.trims?.length) {
+      setSelectedTrim(nextV.trims[0].trim);
+    } else {
+      setSelectedTrim('');
+    }
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -98,6 +113,7 @@ export function QuotationPage() {
         country,
         city,
         vehicle_id: vehicleId ? Number(vehicleId) : null,
+        selected_trim: selectedTrim.trim() || undefined,
         offer_id: offerId ? Number(offerId) : null,
         fleet_quantity: Number(fleetQuantity),
         lease_term_months: Number(leaseTermMonths),
@@ -116,96 +132,109 @@ export function QuotationPage() {
   if (confirmation) {
     const q = confirmation.quotation;
     return (
-      <div className="bg-[#F8F8F6] min-h-[75vh] py-14">
+      <div className="bg-[#0B0B0D] min-h-[75vh] py-16 text-[#E4E0D8]">
         <div className="max-w-[760px] mx-auto px-6">
-          <div className="bg-white border border-[#E3E5E0] rounded-lg p-8 lg:p-10 space-y-6">
-            <div className="flex items-start gap-4">
-              <CheckCircle2 className="h-8 w-8 text-[#15803D] shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-mono tabular-nums text-[#5E6B5B]">
-                  Reference: {q.reference_code}
-                </p>
-                <h1 className="mt-1 font-display text-2xl font-bold text-[#1B1F1A]">
-                  Quotation Request Received
-                </h1>
-                <p className="mt-2 text-sm text-[#4D544C] leading-relaxed">
-                  {confirmation.message} Our regional fleet desk will respond during business hours
-                  (Sun–Thu 8:30 AM – 5:30 PM, Sat 9:00 AM – 1:00 PM).
-                </p>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#141418] border border-[#C8A45D]/40 rounded-xl overflow-hidden"
+          >
+            <div className="h-[2px] w-full gold-top-accent" />
+            <div className="p-8 lg:p-10 space-y-6">
+              <div className="flex items-start gap-4">
+                <CheckCircle2 className="h-8 w-8 text-[#4ADE80] shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-mono tabular-nums text-[#C8A45D]">
+                    Reference: {q.reference_code}
+                  </p>
+                  <h1 className="mt-1 font-display text-2xl font-bold text-white">
+                    Quotation Request Received
+                  </h1>
+                  <p className="mt-2 text-sm text-[#B4B0A8] leading-relaxed">
+                    {confirmation.message} Our regional fleet desk will respond during business hours
+                    (Sun–Thu 8:30 AM – 5:30 PM, Sat 9:00 AM – 1:00 PM).
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 border-t border-white/[0.08] text-sm">
+                <div>
+                  <dt className="text-xs text-[#949088]">Applicant</dt>
+                  <dd className="font-medium text-white mt-0.5">
+                    {q.full_name} {q.company_name ? `· ${q.company_name}` : ''}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[#949088]">Market &amp; City</dt>
+                  <dd className="font-medium text-white mt-0.5">
+                    {q.country} — {q.city}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[#949088]">Fleet Size &amp; Term</dt>
+                  <dd className="font-mono tabular-nums font-medium text-[#C8A45D] mt-0.5">
+                    {q.fleet_quantity} unit{q.fleet_quantity > 1 ? 's' : ''} · {q.lease_term_months} months
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-[#949088]">Assigned Desk</dt>
+                  <dd className="font-medium text-white mt-0.5">{q.routing_email}</dd>
+                </div>
+                {q.vehicle_label && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-[#949088]">Selected Vehicle</dt>
+                    <dd className="font-medium text-white mt-0.5">
+                      {q.vehicle_label}
+                      {q.selected_trim ? ` — ${q.selected_trim}` : ''}
+                    </dd>
+                  </div>
+                )}
+                {q.offer_title && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-[#949088]">Referenced Offer</dt>
+                    <dd className="font-medium text-white mt-0.5">{q.offer_title}</dd>
+                  </div>
+                )}
+              </dl>
+
+              <div className="pt-6 border-t border-white/[0.08] flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmation(null);
+                    setNotes('');
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-white bg-[#1B1B20] border border-white/15 rounded-lg"
+                >
+                  Submit Another Request
+                </button>
+                <Link
+                  to="/showroom"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-[#0B0B0D] bg-[#C8A45D] rounded-lg"
+                >
+                  <span>Return to Showroom</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
               </div>
             </div>
-
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 border-t border-[#ECEEE9] text-sm">
-              <div>
-                <dt className="text-xs text-[#5E6B5B]">Applicant</dt>
-                <dd className="font-medium text-[#1B1F1A] mt-0.5">
-                  {q.full_name} {q.company_name ? `· ${q.company_name}` : ''}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-[#5E6B5B]">Market &amp; City</dt>
-                <dd className="font-medium text-[#1B1F1A] mt-0.5">
-                  {q.country} — {q.city}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-[#5E6B5B]">Fleet Size &amp; Term</dt>
-                <dd className="font-mono tabular-nums font-medium text-[#1B1F1A] mt-0.5">
-                  {q.fleet_quantity} unit{q.fleet_quantity > 1 ? 's' : ''} · {q.lease_term_months} months
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-[#5E6B5B]">Assigned Desk</dt>
-                <dd className="font-medium text-[#1B1F1A] mt-0.5">{q.routing_email}</dd>
-              </div>
-              {q.vehicle_label && (
-                <div className="sm:col-span-2">
-                  <dt className="text-xs text-[#5E6B5B]">Selected Vehicle</dt>
-                  <dd className="font-medium text-[#1B1F1A] mt-0.5">{q.vehicle_label}</dd>
-                </div>
-              )}
-              {q.offer_title && (
-                <div className="sm:col-span-2">
-                  <dt className="text-xs text-[#5E6B5B]">Referenced Offer</dt>
-                  <dd className="font-medium text-[#1B1F1A] mt-0.5">{q.offer_title}</dd>
-                </div>
-              )}
-            </dl>
-
-            <div className="pt-6 border-t border-[#ECEEE9] flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmation(null);
-                  setNotes('');
-                }}
-                className="px-4 py-2 text-sm font-medium text-[#1B1F1A] bg-[#F8F8F6] border border-[#D8DBD4] rounded-md"
-              >
-                Submit Another Request
-              </button>
-              <Link
-                to="/showroom"
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-[#3A4338] rounded-md"
-              >
-                <span>Return to Showroom</span>
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </div>
+          </motion.div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-[#F8F8F6] min-h-[75vh]">
-      <section className="bg-white border-b border-[#E3E5E0]">
-        <div className="max-w-[1280px] mx-auto px-6 lg:px-8 py-12">
-          <p className="text-sm font-medium text-[#7B6C53]">Operational Leasing &amp; Fleet Inquiries</p>
-          <h1 className="mt-2 font-display text-3xl lg:text-4xl font-bold tracking-tight text-[#1B1F1A]">
+    <div className="bg-[#0B0B0D] min-h-[75vh] text-[#E4E0D8]">
+      <section className="relative bg-[#0E0E11] border-b border-white/[0.08]">
+        <AmbientGoldBackdrop />
+        <div className="relative z-10 max-w-[1280px] mx-auto px-6 lg:px-8 py-12">
+          <p className="text-xs font-semibold tracking-[0.2em] text-[#C8A45D]">
+            OPERATIONAL LEASING &amp; FLEET INQUIRIES
+          </p>
+          <h1 className="mt-2 font-display text-3xl lg:text-4xl font-bold tracking-tight text-white">
             Request a Quotation
           </h1>
-          <p className="mt-3 text-sm text-[#4D544C] max-w-2xl leading-relaxed">
+          <p className="mt-3 text-sm text-[#B4B0A8] max-w-2xl leading-relaxed">
             Configure your operational lease, corporate rental, limousine retainer, or certified used
             vehicle inquiry. All requests are routed directly to our regional sales team (
             {BRAND.emails.sales}).
@@ -214,281 +243,308 @@ export function QuotationPage() {
       </section>
 
       <section className="max-w-[1280px] mx-auto px-6 lg:px-8 py-12 grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
-        <form
-          onSubmit={handleSubmit}
-          className="lg:col-span-8 bg-white border border-[#E3E5E0] rounded-lg p-7 lg:p-8 space-y-8"
-        >
-          {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-md text-sm text-red-800">
-              {error}
-            </div>
-          )}
+        <Reveal className="lg:col-span-8 bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
+          <div className="h-[2px] w-full gold-top-accent" />
+          <form onSubmit={handleSubmit} className="p-7 lg:p-8 space-y-8">
+            {error && (
+              <div className="p-4 bg-red-950/50 border border-red-500/40 rounded-lg text-sm text-red-200">
+                {error}
+              </div>
+            )}
 
-          {/* Client Type Selector */}
-          <div>
-            <h2 className="font-display text-lg font-semibold text-[#1B1F1A]">
-              01. Client Information
-            </h2>
-            <div className="mt-4 flex items-center gap-1 p-1 bg-[#F1F2EE] rounded-lg w-fit">
-              {(['corporate', 'individual'] as const).map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setClientType(type)}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-md capitalize transition-colors ${
-                    clientType === type
-                      ? 'bg-[#3A4338] text-white'
-                      : 'text-[#4D544C] hover:text-[#1B1F1A]'
-                  }`}
-                >
-                  {type === 'corporate' ? 'Corporate / Enterprise' : 'Individual Client'}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Full Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="e.g. Khalid Al-Doseri"
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Company Name {clientType === 'corporate' ? '*' : '(Optional)'}
-                </label>
-                <input
-                  type="text"
-                  required={clientType === 'corporate'}
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Organization / EPC Contractor"
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Work Email *
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@company.com"
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Phone / WhatsApp *
-                </label>
-                <input
-                  type="tel"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+973 / +966 / +968 ..."
-                  className="w-full px-3.5 py-2.5 text-sm font-mono bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Country *
-                </label>
-                <select
-                  value={country}
-                  onChange={(e) =>
-                    setCountry(e.target.value as 'Bahrain' | 'Saudi Arabia' | 'Oman')
-                  }
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                >
-                  <option value="Bahrain">Bahrain</option>
-                  <option value="Saudi Arabia">Saudi Arabia</option>
-                  <option value="Oman">Oman</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  City / Project Zone *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="e.g. Amwaj, Khobar, Jubail, NEOM, Muscat"
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Fleet Configuration */}
-          <div className="pt-6 border-t border-[#ECEEE9]">
-            <h2 className="font-display text-lg font-semibold text-[#1B1F1A]">
-              02. Fleet &amp; Contract Requirements
-            </h2>
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Select Vehicle (Optional)
-                </label>
-                <select
-                  value={vehicleId}
-                  onChange={(e) => setVehicleId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                >
-                  <option value="">Any / Mixed Fleet Requirement</option>
-                  <optgroup label="Showroom (Operational Leasing)">
-                    {vehicles
-                      .filter((v) => v.listing_type === 'showroom')
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.year} {v.make} {v.model} ({v.currency} {v.price_or_monthly_rate}/mo)
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="Certified Used Cars">
-                    {vehicles
-                      .filter((v) => v.listing_type === 'used')
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          [Used] {v.year} {v.make} {v.model} ({v.currency}{' '}
-                          {v.price_or_monthly_rate.toLocaleString()})
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-white">
+                <span className="font-mono text-[#C8A45D] mr-2">01.</span>
+                Client Information
+              </h2>
+              <div className="mt-4 flex items-center gap-1 p-1 bg-[#1B1B20] border border-white/[0.08] rounded-lg w-fit">
+                {(['corporate', 'individual'] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setClientType(type)}
+                    className={`px-4 py-1.5 text-xs font-medium rounded-md capitalize transition-colors ${
+                      clientType === type
+                        ? 'bg-[#C8A45D] text-[#0B0B0D]'
+                        : 'text-[#B4B0A8] hover:text-white'
+                    }`}
+                  >
+                    {type === 'corporate' ? 'Corporate / Enterprise' : 'Individual Client'}
+                  </button>
+                ))}
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Reference Offer Package (Optional)
-                </label>
-                <select
-                  value={offerId}
-                  onChange={(e) => setOfferId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                >
-                  <option value="">Standard Operational Lease / Inquiry</option>
-                  {offers.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Fleet Quantity (Vehicles) *
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={500}
-                  required
-                  value={fleetQuantity}
-                  onChange={(e) => setFleetQuantity(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-full px-3.5 py-2.5 text-sm font-mono tabular-nums bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-                  Lease Term (Months) *
-                </label>
-                <select
-                  value={leaseTermMonths}
-                  onChange={(e) => setLeaseTermMonths(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 text-sm font-mono tabular-nums bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-                >
-                  <option value={1}>1 Month (Short-Term Rental)</option>
-                  <option value={6}>6 Months</option>
-                  <option value={12}>12 Months</option>
-                  <option value={24}>24 Months</option>
-                  <option value={36}>36 Months (Standard Corporate Lease)</option>
-                  <option value={48}>48 Months</option>
-                  <option value={60}>60 Months</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Safety, Telematics & Mobility Add-ons */}
-          <div className="pt-6 border-t border-[#ECEEE9]">
-            <h2 className="font-display text-lg font-semibold text-[#1B1F1A]">
-              03. Operational, Safety &amp; Service Add-Ons
-            </h2>
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {ADD_ON_OPTIONS.map((opt) => (
-                <label
-                  key={opt.key}
-                  className={`flex items-start gap-3 p-3.5 rounded-md border cursor-pointer transition-colors ${
-                    addOns[opt.key]
-                      ? 'border-[#3A4338] bg-[#F4F6F2]'
-                      : 'border-[#E3E5E0] bg-white hover:border-[#C6CAC0]'
-                  }`}
-                >
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    FULL NAME *
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={addOns[opt.key]}
-                    onChange={() => toggleAddOn(opt.key)}
-                    className="mt-1 h-4 w-4 accent-[#3A4338] shrink-0"
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="e.g. Khalid Al-Doseri"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
                   />
-                  <div>
-                    <div className="text-sm font-medium text-[#1B1F1A]">{opt.label}</div>
-                    <div className="text-xs text-[#5E6B5B] mt-0.5 leading-relaxed">
-                      {opt.detail}
-                    </div>
-                  </div>
-                </label>
-              ))}
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    COMPANY NAME {clientType === 'corporate' ? '*' : '(OPTIONAL)'}
+                  </label>
+                  <input
+                    type="text"
+                    required={clientType === 'corporate'}
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Organization / EPC Contractor"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    WORK EMAIL *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@company.com"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    PHONE / WHATSAPP *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+973 / +966 / +968 ..."
+                    className="w-full px-3.5 py-2.5 text-sm font-mono bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    COUNTRY *
+                  </label>
+                  <select
+                    value={country}
+                    onChange={(e) =>
+                      setCountry(e.target.value as 'Bahrain' | 'Saudi Arabia' | 'Oman')
+                    }
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                  >
+                    <option value="Bahrain">Bahrain</option>
+                    <option value="Saudi Arabia">Saudi Arabia</option>
+                    <option value="Oman">Oman</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    CITY / PROJECT ZONE *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="e.g. Amwaj, Khobar, Jubail, NEOM, Muscat"
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Notes */}
-          <div className="pt-6 border-t border-[#ECEEE9]">
-            <label className="block text-xs font-medium text-[#4D544C] mb-1.5">
-              Project Mobilization Timeline &amp; Additional Specifications
-            </label>
-            <textarea
-              rows={4}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Share expected delivery dates, cross-border insurance requirements (Bahrain / KSA / Oman), mileage estimates, or HSE site specifications..."
-              className="w-full px-3.5 py-2.5 text-sm bg-white border border-[#D8DBD4] rounded-md focus:outline-none focus:border-[#3A4338]"
-            />
-          </div>
+            <div className="pt-6 border-t border-white/[0.08]">
+              <h2 className="font-display text-lg font-semibold text-white">
+                <span className="font-mono text-[#C8A45D] mr-2">02.</span>
+                Fleet &amp; Contract Requirements
+              </h2>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    SELECT VEHICLE (OPTIONAL)
+                  </label>
+                  <select
+                    value={vehicleId}
+                    onChange={(e) => handleVehicleChange(e.target.value)}
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                  >
+                    <option value="">Any / Mixed Fleet Requirement</option>
+                    <optgroup label="Showroom (Operational Leasing)">
+                      {vehicles
+                        .filter((v) => v.listing_type === 'showroom')
+                        .map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.year} {v.make} {v.model} (from {v.currency}{' '}
+                            {v.price_or_monthly_rate.toLocaleString()})
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Certified Used Cars">
+                      {vehicles
+                        .filter((v) => v.listing_type === 'used')
+                        .map((v) => (
+                          <option key={v.id} value={v.id}>
+                            [Used] {v.year} {v.make} {v.model} ({v.currency}{' '}
+                            {v.price_or_monthly_rate.toLocaleString()})
+                          </option>
+                        ))}
+                    </optgroup>
+                  </select>
+                </div>
 
-          <div className="pt-2 flex items-center justify-between gap-4">
-            <p className="text-xs text-[#5E6B5B]">
-              Direct Sales Desk: <span className="font-medium text-[#1B1F1A]">{BRAND.emails.sales}</span>
-            </p>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium text-white bg-[#3A4338] hover:bg-[#282F27] disabled:opacity-60 rounded-md transition-colors whitespace-nowrap"
-            >
-              <span>{submitting ? 'Submitting Request...' : 'Submit Quotation Request'}</span>
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </form>
+                {selectedVehicle && selectedVehicle.trims && selectedVehicle.trims.length > 0 && (
+                  <div>
+                    <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                      SELECT TRIM / GRADE
+                    </label>
+                    <select
+                      value={selectedTrim}
+                      onChange={(e) => setSelectedTrim(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-[#C8A45D]/40 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                    >
+                      <option value="">Any Available Trim</option>
+                      {selectedVehicle.trims.map((t) => (
+                        <option key={t.trim} value={t.trim}>
+                          {t.trim}
+                          {t.price > 0
+                            ? ` — ${selectedVehicle.currency} ${t.price.toLocaleString()}`
+                            : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
-        {/* Right Desk Info Sidebar */}
-        <aside className="lg:col-span-4 space-y-6">
-          <div className="bg-[#282F27] text-white rounded-lg p-6 space-y-4">
-            <h3 className="font-display text-lg font-semibold">Included in Operational Leases</h3>
-            <ul className="space-y-2.5 text-sm text-[#D3D6CF]">
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    REFERENCE OFFER PACKAGE (OPTIONAL)
+                  </label>
+                  <select
+                    value={offerId}
+                    onChange={(e) => setOfferId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                  >
+                    <option value="">Standard Operational Lease / Inquiry</option>
+                    {offers.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    FLEET QUANTITY (VEHICLES) *
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    required
+                    value={fleetQuantity}
+                    onChange={(e) => setFleetQuantity(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full px-3.5 py-2.5 text-sm font-mono tabular-nums bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                    LEASE TERM (MONTHS) *
+                  </label>
+                  <select
+                    value={leaseTermMonths}
+                    onChange={(e) => setLeaseTermMonths(Number(e.target.value))}
+                    className="w-full px-3.5 py-2.5 text-sm font-mono tabular-nums bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
+                  >
+                    <option value={1}>1 Month (Short-Term Rental)</option>
+                    <option value={6}>6 Months</option>
+                    <option value={12}>12 Months</option>
+                    <option value={24}>24 Months</option>
+                    <option value={36}>36 Months (Standard Corporate Lease)</option>
+                    <option value={48}>48 Months</option>
+                    <option value={60}>60 Months</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-6 border-t border-white/[0.08]">
+              <h2 className="font-display text-lg font-semibold text-white">
+                <span className="font-mono text-[#C8A45D] mr-2">03.</span>
+                Operational, Safety &amp; Service Add-Ons
+              </h2>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {ADD_ON_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.key}
+                    className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-colors ${
+                      addOns[opt.key]
+                        ? 'border-[#C8A45D]/60 bg-[#1D1B15]'
+                        : 'border-white/[0.08] bg-[#0C0C0F] hover:border-white/20'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={addOns[opt.key]}
+                      onChange={() => toggleAddOn(opt.key)}
+                      className="mt-1 h-4 w-4 accent-[#C8A45D] shrink-0"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-white">{opt.label}</div>
+                      <div className="text-xs text-[#B4B0A8] mt-0.5 leading-relaxed">
+                        {opt.detail}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-6 border-t border-white/[0.08]">
+              <label className="block text-[11px] font-semibold tracking-wider text-[#B4B0A8] mb-1.5">
+                PROJECT MOBILIZATION TIMELINE &amp; ADDITIONAL SPECIFICATIONS
+              </label>
+              <textarea
+                rows={4}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Share expected delivery dates, cross-border insurance requirements (Bahrain / KSA / Oman), mileage estimates, or HSE site specifications..."
+                className="w-full px-3.5 py-2.5 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white placeholder:text-[#7F7B74] focus:outline-none focus:border-[#C8A45D]"
+              />
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <p className="text-xs text-[#B4B0A8]">
+                Direct Sales Desk:{' '}
+                <span className="font-medium text-[#C8A45D]">{BRAND.emails.sales}</span>
+              </p>
+              <motion.button
+                type="submit"
+                disabled={submitting}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-semibold text-[#0B0B0D] bg-[#C8A45D] hover:bg-[#DCBC7A] disabled:opacity-60 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <span>{submitting ? 'Submitting Request...' : 'Submit Quotation Request'}</span>
+                <ArrowRight className="h-4 w-4" />
+              </motion.button>
+            </div>
+          </form>
+        </Reveal>
+
+        <Reveal delay={0.1} className="lg:col-span-4 space-y-6">
+          <div className="bg-[#141418] border border-[#C8A45D]/30 rounded-xl p-6 space-y-4">
+            <h3 className="font-display text-lg font-semibold text-white">
+              Included in Operational Leases
+            </h3>
+            <ul className="space-y-2.5 text-sm text-[#D4D4DC]">
               <li>· Manufacturer-schedule maintenance &amp; spare parts</li>
               <li>· 700+ quick service facilities via B2B partners</li>
               <li>· Comprehensive GCC insurance (BHR / KSA / OMN)</li>
@@ -497,32 +553,35 @@ export function QuotationPage() {
             </ul>
           </div>
 
-          <div className="bg-white border border-[#E3E5E0] rounded-lg p-6 space-y-4">
-            <h3 className="font-display text-base font-semibold text-[#1B1F1A]">
+          <div className="bg-[#141418] border border-white/[0.08] rounded-xl p-6 space-y-4">
+            <h3 className="font-display text-base font-semibold text-white">
               Direct Regional Desks
             </h3>
             <div className="space-y-3 text-sm">
               {BRAND.offices.map((o) => (
-                <div key={o.country} className="pb-3 border-b border-[#ECEEE9] last:border-b-0 last:pb-0">
-                  <div className="font-medium text-[#1B1F1A]">
+                <div
+                  key={o.country}
+                  className="pb-3 border-b border-white/[0.08] last:border-b-0 last:pb-0"
+                >
+                  <div className="font-medium text-white">
                     {o.country} — {o.city} ({o.role})
                   </div>
                   <a
                     href={o.telHref}
-                    className="font-mono tabular-nums text-xs text-[#3A4338] hover:underline"
+                    className="font-mono tabular-nums text-xs text-[#C8A45D] hover:text-[#EBD4A0]"
                   >
                     {o.phone}
                   </a>
                 </div>
               ))}
             </div>
-            <div className="pt-2 text-xs text-[#5E6B5B] space-y-1">
+            <div className="pt-2 text-xs text-[#B4B0A8] space-y-1">
               <div>Sales: {BRAND.emails.sales}</div>
               <div>Customer Support: {BRAND.emails.customerSupport}</div>
               <div>General Inquiries: {BRAND.emails.general}</div>
             </div>
           </div>
-        </aside>
+        </Reveal>
       </section>
     </div>
   );

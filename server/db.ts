@@ -1,6 +1,15 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import {
+  REAL_ARTICLES,
+  REAL_BRANCHES,
+  REAL_OFFERS,
+  REAL_REVIEWS,
+  REAL_SITE_CONTENT,
+  REAL_VEHICLES,
+  REAL_WORKSHOPS,
+} from './realDbSeed.ts';
 
 const dataDir = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
@@ -13,8 +22,20 @@ export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function ensureColumn(table: string, column: string, definition: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 export function initializeDatabase(): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS admin_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -44,13 +65,18 @@ export function initializeDatabase(): void {
       transmission TEXT NOT NULL,
       mileage_km INTEGER DEFAULT 0,
       price_or_monthly_rate REAL NOT NULL,
-      currency TEXT NOT NULL DEFAULT 'BHD',
+      currency TEXT NOT NULL DEFAULT 'SAR',
       country_availability TEXT NOT NULL,
       is_featured INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'reserved', 'leased', 'sold')),
       image_url TEXT DEFAULT '',
       description TEXT NOT NULL,
       safety_telematics_specs TEXT NOT NULL DEFAULT '[]',
+      trims TEXT NOT NULL DEFAULT '[]',
+      specs_json TEXT NOT NULL DEFAULT '{}',
+      colors TEXT NOT NULL DEFAULT '[]',
+      sub_type TEXT NOT NULL DEFAULT '',
+      service_type TEXT NOT NULL DEFAULT 'leasing',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -58,29 +84,37 @@ export function initializeDatabase(): void {
     CREATE TABLE IF NOT EXISTS offers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
+      title_ar TEXT NOT NULL DEFAULT '',
       slug TEXT NOT NULL UNIQUE,
       subtitle TEXT NOT NULL,
+      subtitle_ar TEXT NOT NULL DEFAULT '',
       category TEXT NOT NULL,
       monthly_rate_from REAL,
-      currency TEXT NOT NULL DEFAULT 'BHD',
+      currency TEXT NOT NULL DEFAULT 'SAR',
       countries TEXT NOT NULL,
       valid_until TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       highlights TEXT NOT NULL DEFAULT '[]',
       description TEXT NOT NULL,
+      description_ar TEXT NOT NULL DEFAULT '',
       image_url TEXT DEFAULT '',
+      vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
+      title_ar TEXT NOT NULL DEFAULT '',
       slug TEXT NOT NULL UNIQUE,
       category TEXT NOT NULL,
       author TEXT NOT NULL,
+      author_ar TEXT NOT NULL DEFAULT '',
       read_time_minutes INTEGER NOT NULL DEFAULT 4,
       excerpt TEXT NOT NULL,
+      excerpt_ar TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL,
+      body_ar TEXT NOT NULL DEFAULT '',
       image_url TEXT DEFAULT '',
       published_at TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -97,6 +131,7 @@ export function initializeDatabase(): void {
       country TEXT NOT NULL CHECK (country IN ('Bahrain', 'Saudi Arabia', 'Oman')),
       city TEXT NOT NULL,
       vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE SET NULL,
+      selected_trim TEXT DEFAULT '',
       offer_id INTEGER REFERENCES offers(id) ON DELETE SET NULL,
       fleet_quantity INTEGER NOT NULL DEFAULT 1,
       lease_term_months INTEGER NOT NULL DEFAULT 36,
@@ -123,450 +158,300 @@ export function initializeDatabase(): void {
       status TEXT NOT NULL DEFAULT 'unread' CHECK (status IN ('unread', 'read', 'archived')),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS site_content (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS client_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company TEXT NOT NULL,
+      employee TEXT NOT NULL,
+      position TEXT NOT NULL DEFAULT '',
+      date_of_service TEXT NOT NULL,
+      vehicle_condition INTEGER NOT NULL DEFAULT 5,
+      price_satisfaction INTEGER NOT NULL DEFAULT 4,
+      staff_behavior INTEGER NOT NULL DEFAULT 5,
+      pickup_process INTEGER NOT NULL DEFAULT 4,
+      dropoff_process INTEGER NOT NULL DEFAULT 4,
+      cleanliness INTEGER NOT NULL DEFAULT 4,
+      value_for_money INTEGER NOT NULL DEFAULT 4,
+      overall INTEGER NOT NULL DEFAULT 5,
+      would_recommend INTEGER NOT NULL DEFAULT 1,
+      comment TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS branches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      name_ar TEXT NOT NULL DEFAULT '',
+      country TEXT NOT NULL,
+      city TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      is_hq INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS workshops (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      name_ar TEXT NOT NULL DEFAULT '',
+      branch_name TEXT NOT NULL,
+      city TEXT NOT NULL,
+      country TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      hours TEXT NOT NULL
+    );
   `);
 
-  seedInitialData();
+  // Safe column upgrades for pre-existing SQLite databases
+  ensureColumn('vehicles', 'trims', `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn('vehicles', 'specs_json', `TEXT NOT NULL DEFAULT '{}'`);
+  ensureColumn('vehicles', 'colors', `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn('vehicles', 'sub_type', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('vehicles', 'service_type', `TEXT NOT NULL DEFAULT 'leasing'`);
+
+  ensureColumn('offers', 'title_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('offers', 'subtitle_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('offers', 'description_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('offers', 'vehicle_id', `INTEGER REFERENCES vehicles(id) ON DELETE SET NULL`);
+
+  ensureColumn('articles', 'title_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('articles', 'author_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('articles', 'excerpt_ar', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('articles', 'body_ar', `TEXT NOT NULL DEFAULT ''`);
+
+  ensureColumn('quotation_requests', 'selected_trim', `TEXT DEFAULT ''`);
+
+  applyRealDbMigrationIfNeeded();
 }
 
-function seedInitialData(): void {
-  const vehicleCount = (db.prepare('SELECT COUNT(*) as count FROM vehicles').get() as { count: number }).count;
-  if (vehicleCount === 0) {
+const TARGET_SEED_VERSION = 'real_db_v2';
+
+function applyRealDbMigrationIfNeeded(): void {
+  const row = db.prepare(`SELECT value FROM meta WHERE key = 'db_import_version'`).get() as
+    | { value: string }
+    | undefined;
+
+  if (row?.value === TARGET_SEED_VERSION) {
+    return;
+  }
+
+  const tx = db.transaction(() => {
+    // Refresh catalog, offers, articles, reviews, branches, workshops, site_content from curated real DB
+    // Never touch admin_users or admin_sessions
+    db.exec(`
+      UPDATE quotation_requests SET vehicle_id = NULL, offer_id = NULL;
+      DELETE FROM offers;
+      DELETE FROM vehicles;
+      DELETE FROM articles;
+      DELETE FROM client_reviews;
+      DELETE FROM branches;
+      DELETE FROM workshops;
+      DELETE FROM site_content;
+      DELETE FROM quotation_requests;
+      DELETE FROM contact_messages;
+    `);
+
+    const insertSite = db.prepare(`INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)`);
+    for (const [k, v] of Object.entries(REAL_SITE_CONTENT)) {
+      insertSite.run(k, String(v));
+    }
+
+    const insertBranch = db.prepare(`
+      INSERT INTO branches (name, name_ar, country, city, phone, is_hq)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const b of REAL_BRANCHES) {
+      insertBranch.run(b.name, b.name_ar, b.country, b.city, b.phone, b.is_hq);
+    }
+
+    const insertWorkshop = db.prepare(`
+      INSERT INTO workshops (name, name_ar, branch_name, city, country, phone, hours)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const w of REAL_WORKSHOPS) {
+      insertWorkshop.run(w.name, w.name_ar, w.branch_name, w.city, w.country, w.phone, w.hours);
+    }
+
     const insertVehicle = db.prepare(`
       INSERT INTO vehicles (
         make, model, year, category, listing_type, fuel_type, transmission,
         mileage_km, price_or_monthly_rate, currency, country_availability,
-        is_featured, status, image_url, description, safety_telematics_specs
+        is_featured, status, image_url, description, safety_telematics_specs,
+        trims, specs_json, colors, sub_type, service_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const sourceIdToNewId = new Map<number, number>();
+    for (const v of REAL_VEHICLES) {
+      const res = insertVehicle.run(
+        v.make,
+        v.model,
+        v.year,
+        v.category,
+        v.listing_type,
+        v.fuel_type,
+        v.transmission,
+        v.mileage_km,
+        v.price_or_monthly_rate,
+        v.currency,
+        JSON.stringify(v.country_availability),
+        v.is_featured,
+        v.status,
+        v.image_url,
+        v.description,
+        JSON.stringify(v.safety_telematics_specs),
+        JSON.stringify(v.trims),
+        JSON.stringify(v.specs),
+        JSON.stringify(v.colors),
+        v.sub_type,
+        v.service_type
+      );
+      sourceIdToNewId.set(v.source_id, Number(res.lastInsertRowid));
+    }
+
+    const insertOffer = db.prepare(`
+      INSERT INTO offers (
+        title, title_ar, slug, subtitle, subtitle_ar, category,
+        monthly_rate_from, currency, countries, valid_until, is_active,
+        highlights, description, description_ar, image_url, vehicle_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const seedVehicles = [
-      // Showroom (New / Operational Leasing)
-      [
-        'Toyota',
-        'Land Cruiser 300 VX-R',
-        2026,
-        'SUV',
-        'showroom',
-        'Petrol',
-        'Automatic',
-        0,
-        695,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        1,
-        'available',
-        '/assets/jadeer/land-cruiser-vxr.jpg',
-        'Flagship corporate 4x4 engineered for GCC executive transport and remote energy-sector site operations. Available with full manufacturer-schedule maintenance, 700+ quick service facilities, and cross-border comprehensive insurance across Bahrain, Saudi Arabia, and Oman.',
-        JSON.stringify([
-          'GPS Vehicle Tracking & Fleet Telematics',
-          'Blue Key Driver Access Control',
-          'USA-Standard Roll Bar & Roll Cage Ready',
-          'GCC Comprehensive Insurance (BHR / KSA / OMN)',
-          '24/7 Mobile Service & Replacement Vehicle Guarantee',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Land Cruiser GR Sport',
-        2026,
-        'SUV',
-        'showroom',
-        'Twin-Turbo V6',
-        'Automatic',
-        0,
-        745,
-        'BHD',
-        JSON.stringify(['Saudi Arabia', 'Oman', 'Bahrain']),
-        1,
-        'available',
-        '/assets/jadeer/land-cruiser-gr.jpg',
-        'Heavy-duty desert and project-site SUV tailored for EPC contractors operating in NEOM, Jubail, Tabuk, and Ras al Khair. Factory E-KDSS suspension paired with Jadeer United HSE safety outfitting.',
-        JSON.stringify([
-          'USA-Standard Certified Internal Roll Cage',
-          'GPS Tracking & Geofenced Site Telemetry',
-          'Blue Key Authorized Driver Immobilizer',
-          'Desert Recovery & Dual-Battery Site Package',
-          '24/7 GCC Mobile Support Crew',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Corolla 1.8 Hybrid Executive',
-        2026,
-        'Hybrid',
-        'showroom',
-        'Hybrid',
-        'CVT Automatic',
-        0,
-        215,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        1,
-        'available',
-        '/assets/jadeer/corolla-jadeer.jpg',
-        'Core corporate fleet sedan built for Bahrain, Saudi Arabia, and Oman Vision 2030 sustainability mandates. Reduces fleet fuel consumption by up to 42% while maintaining zero downtime via door-to-door servicing.',
-        JSON.stringify([
-          'Vision 2030 Low-Emission Hybrid Powertrain',
-          'GPS Fleet Tracking & Eco-Driving Telemetry',
-          'Blue Key Access Control System',
-          'Manufacturer-Schedule Maintenance & Spare Parts',
-          'Door-to-Door Service & Replacement Vehicle',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Corolla Cross Hybrid',
-        2026,
-        'Hybrid',
-        'showroom',
-        'Hybrid',
-        'CVT Automatic',
-        0,
-        285,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        1,
-        'available',
-        '/assets/jadeer/corolla-cross-hybrid.jpg',
-        'Versatile compact hybrid crossover suited for regional sales teams, engineers, and urban corporate mobility. Combines elevated ground clearance with Vision 2030 emissions alignment.',
-        JSON.stringify([
-          'Self-Charging Hybrid Electric Drivetrain',
-          'GPS Tracking & Usage Management',
-          'Blue Key Driver Identification',
-          '700+ B2B Quick Service Facilities Access',
-          'Comprehensive GCC Insurance Coverage',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Camry 2.5 Hybrid GLE',
-        2026,
-        'Sedan',
-        'showroom',
-        'Hybrid',
-        'CVT Automatic',
-        0,
-        340,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        0,
-        'available',
-        '/assets/jadeer/corolla-jadeer.jpg',
-        'Executive corporate and VIP limousine sedan delivering silent cabin refinement, rear passenger comfort, and hybrid efficiency for senior management and diplomatic delegations.',
-        JSON.stringify([
-          'Dedicated Chauffeur / Limousine Configuration Available',
-          'GPS Tracking & Real-Time Dispatch',
-          'Manufacturer-Schedule Preventive Maintenance',
-          'Immediate Accident/Breakdown Replacement',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Hilux 4x4 Double Cab Fleet Spec',
-        2026,
-        'Fleet',
-        'showroom',
-        'Diesel',
-        'Automatic',
-        0,
-        365,
-        'BHD',
-        JSON.stringify(['Saudi Arabia', 'Oman', 'Bahrain']),
-        0,
-        'available',
-        '/assets/jadeer/land-cruiser-gr.jpg',
-        'Industrial workhorse engineered for oil, gas, petrochemical, and mega-project contractors across Khobar, Jubail, Yanbu, Jizan, and Muscat. Fully configurable to Aramco and SABIC site safety requirements.',
-        JSON.stringify([
-          'USA-Standard Roll Bar & External Protection Cage',
-          'IVMS / GPS Vehicle Tracking & Speed Limiter',
-          'Blue Key Shift-Handover Access Control',
-          'High-Visibility Site Safety Beacon & Fire Kit',
-        ]),
-      ],
+    const insertedOfferIds: number[] = [];
+    for (const o of REAL_OFFERS) {
+      const linkedVehicleId = o.source_car_id ? sourceIdToNewId.get(o.source_car_id) ?? null : null;
+      const res = insertOffer.run(
+        o.title,
+        o.title_ar,
+        o.slug,
+        o.subtitle,
+        o.subtitle_ar,
+        o.category,
+        o.monthly_rate_from,
+        o.currency,
+        JSON.stringify(o.countries),
+        o.valid_until,
+        o.is_active,
+        JSON.stringify(o.highlights),
+        o.description,
+        o.description_ar,
+        o.image_url,
+        linkedVehicleId
+      );
+      insertedOfferIds.push(Number(res.lastInsertRowid));
+    }
 
-      // Certified Used Cars
-      [
-        'Toyota',
-        'Land Cruiser GXR 3.5TT',
-        2023,
-        'SUV',
-        'used',
-        'Petrol',
-        'Automatic',
-        42800,
-        24900,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia']),
-        1,
-        'available',
-        '/assets/jadeer/land-cruiser-vxr.jpg',
-        'Single-owner Jadeer United ex-corporate executive fleet vehicle. Complete manufacturer-schedule service ledger from day one, accident-free chassis, and full 120-point mechanical inspection.',
-        JSON.stringify([
-          'Full Manufacturer Maintenance History',
-          '120-Point Jadeer Motors Technical Certification',
-          'GPS Tracking Pre-Wired',
-          'GCC Specifications with Verified Mileage',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Corolla 1.8 Hybrid XLI',
-        2024,
-        'Hybrid',
-        'used',
-        'Hybrid',
-        'CVT Automatic',
-        31500,
-        7650,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        1,
-        'available',
-        '/assets/jadeer/corolla-jadeer.jpg',
-        'Curated low-mileage hybrid sedan from Jadeer United corporate lease return. Serviced exclusively on manufacturer schedule with original parts and verified battery health.',
-        JSON.stringify([
-          'Certified Hybrid Battery Health Report (98%)',
-          'Complete Authorized Service Record',
-          'GCC Spec Dual-Zone Climate Control',
-          'Immediate Cross-Border Export Documentation',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Corolla Cross 1.8 Hybrid GLI',
-        2023,
-        'Hybrid',
-        'used',
-        'Hybrid',
-        'CVT Automatic',
-        38200,
-        8950,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Oman']),
-        1,
-        'available',
-        '/assets/jadeer/corolla-cross-hybrid.jpg',
-        'Well-maintained corporate crossover featuring hybrid efficiency, rear camera, and complete Jadeer United maintenance documentation.',
-        JSON.stringify([
-          'Manufacturer-Schedule Spare Parts Ledger',
-          'Clean GCC Inspection Certificate',
-          'Bluetooth & Fleet Telemetry Compatible',
-        ]),
-      ],
-      [
-        'Toyota',
-        'Fortuner 4x4 VX',
-        2023,
-        'SUV',
-        'used',
-        'Petrol',
-        'Automatic',
-        51400,
-        13400,
-        'BHD',
-        JSON.stringify(['Saudi Arabia', 'Oman', 'Bahrain']),
-        0,
-        'available',
-        '/assets/jadeer/land-cruiser-gr.jpg',
-        'Rugged 7-seater 4x4 maintained by our Khobar fleet engineering team. Ideal for both family travel and site supervision duties.',
-        JSON.stringify([
-          'Full B2B Partner Service History',
-          '4WD Differential Lock & Heavy-Duty Suspension',
-          'Available for Cash Sale or Corporate Buyback',
-        ]),
-      ],
-    ];
-
-    const tx = db.transaction(() => {
-      for (const v of seedVehicles) {
-        insertVehicle.run(...v);
-      }
-    });
-    tx();
-  }
-
-  const offerCount = (db.prepare('SELECT COUNT(*) as count FROM offers').get() as { count: number }).count;
-  if (offerCount === 0) {
-    const insertOffer = db.prepare(`
-      INSERT INTO offers (
-        title, slug, subtitle, category, monthly_rate_from, currency,
-        countries, valid_until, is_active, highlights, description, image_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const seedOffers = [
-      [
-        'Vision 2030 Hybrid Fleet Leasing Package',
-        'vision-2030-hybrid-fleet-package',
-        'Transition your corporate fleet to self-charging hybrid sedans and crossovers with zero capital expenditure.',
-        'Operational Leasing',
-        205,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        '2026-12-31',
-        1,
-        JSON.stringify([
-          'Minimum 5-vehicle corporate deployment across GCC',
-          'Includes GPS tracking, Blue Key access control & CO2 reporting',
-          'Access to 700+ B2B quick service facilities & door-to-door servicing',
-          'Immediate replacement vehicle guarantee in case of breakdown or accident',
-        ]),
-        'Designed for enterprises aligning with Bahrain, Saudi Arabia, and Oman Vision 2030 sustainability objectives. Fixed monthly operational lease covers comprehensive GCC insurance, scheduled manufacturer maintenance, tires, spare parts, and 24/7 mobile assistance.',
-        '/assets/jadeer/corolla-cross-hybrid.jpg',
-      ],
-      [
-        'Energy & EPC Site-Ready 4x4 Fleet Program',
-        'epc-site-ready-4x4-fleet',
-        'Heavy-duty Land Cruiser and Hilux fleets pre-equipped with USA-standard roll bars, roll cages, and IVMS.',
-        'Industrial Fleet',
-        355,
-        'BHD',
-        JSON.stringify(['Saudi Arabia', 'Oman', 'Bahrain']),
-        '2026-12-31',
-        1,
-        JSON.stringify([
-          'USA-standard certified internal roll cages & external roll bars',
-          'GPS tracking and Blue Key shift-access control installed prior to handover',
-          'Active field coverage in Khobar, Jubail, NEOM, Tabuk, Yanbu, Jizan & Muscat',
-          '24/7 dedicated mobile service crew for remote project zones',
-        ]),
-        'Built specifically for petrochemical, energy, and mega-project contractors. Eliminate mobilization delays with pre-certified HSE vehicles delivered directly to your project gate.',
-        '/assets/jadeer/land-cruiser-gr.jpg',
-      ],
-      [
-        'Executive Limousine & Dedicated Chauffeur Retainer',
-        'executive-limousine-chauffeur-retainer',
-        'Monthly VIP corporate transportation and vetted professional driver services for board members and delegations.',
-        'Limousine & Drivers',
-        580,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        '2026-11-30',
-        1,
-        JSON.stringify([
-          'Vetted, bilingual professional corporate drivers',
-          'Cross-border Bahrain–Khobar causeway transit coordination',
-          'Late-model executive sedans and Land Cruiser VX-R fleet',
-          '24/7 priority dispatch and airport protocol support',
-        ]),
-        'Dependable executive mobility for visiting leadership, diplomatic guests, and corporate summits across Amwaj, Manama, Khobar, Riyadh, and Muscat.',
-        '/assets/jadeer/land-cruiser-vxr.jpg',
-      ],
-      [
-        'Certified Used Corporate Fleet Buy-Direct Program',
-        'certified-used-fleet-buy-direct',
-        'Acquire fully documented, manufacturer-maintained ex-lease vehicles directly from Jadeer United Motors.',
-        'Used Car Sales',
-        7650,
-        'BHD',
-        JSON.stringify(['Bahrain', 'Saudi Arabia', 'Oman']),
-        '2026-12-15',
-        1,
-        JSON.stringify([
-          'Complete manufacturer-schedule maintenance and spare parts records',
-          'Zero-accident chassis verification and 120-point inspection',
-          'Fleet volume pricing for SMEs acquiring 3+ vehicles',
-          'Streamlined GCC registration and ownership transfer',
-        ]),
-        'Purchase directly from our curated ex-operational lease inventory with transparent mileage, authorized service history, and dedicated sales consultation.',
-        '/assets/jadeer/corolla-jadeer.jpg',
-      ],
-    ];
-
-    const tx = db.transaction(() => {
-      for (const o of seedOffers) {
-        insertOffer.run(...o);
-      }
-    });
-    tx();
-  }
-
-  const articleCount = (db.prepare('SELECT COUNT(*) as count FROM articles').get() as { count: number }).count;
-  if (articleCount === 0) {
     const insertArticle = db.prepare(`
       INSERT INTO articles (
-        title, slug, category, author, read_time_minutes, excerpt, body, image_url, published_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        title, title_ar, slug, category, author, author_ar,
+        read_time_minutes, excerpt, excerpt_ar, body, body_ar,
+        image_url, published_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    for (const a of REAL_ARTICLES) {
+      insertArticle.run(
+        a.title,
+        a.title_ar,
+        a.slug,
+        a.category,
+        a.author,
+        a.author_ar,
+        a.read_time_minutes,
+        a.excerpt,
+        a.excerpt_ar,
+        a.body,
+        a.body_ar,
+        a.image_url,
+        a.published_at
+      );
+    }
 
-    const seedArticles = [
-      [
-        'Accelerating Vision 2030 with Hybrid Operational Leasing Across the GCC',
-        'accelerating-vision-2030-hybrid-operational-leasing',
-        'Sustainability',
-        'Jadeer United Strategy Desk',
-        5,
-        'How enterprises in Bahrain, Saudi Arabia, and Oman are cutting fleet emissions and fuel expenditure without disrupting field operations.',
-        `Organizations operating across Bahrain, Saudi Arabia, and Oman face dual pressures: expanding project footprints across industrial hubs while demonstrating measurable progress toward national Vision 2030 sustainability mandates.\n\nHybrid operational leasing bridges this gap immediately. Unlike full-electric deployments that still face charging infrastructure constraints along remote corridors between Khobar, Jubail, Tabuk, and NEOM, self-charging hybrid vehicles deliver immediate 35–45% fuel and tailpipe CO2 reductions with zero range anxiety.\n\nAt Jadeer United, every hybrid lease integrates real-time GPS telematics, Blue Key driver usage accountability, and manufacturer-schedule preventive maintenance across more than 700 quick service partner facilities. Finance leaders gain predictable fixed monthly opex, while HSE and ESG teams receive auditable fleet efficiency data.`,
-        '/assets/jadeer/corolla-cross-hybrid.jpg',
-        '2026-10-18',
-      ],
-      [
-        'Why USA-Standard Roll Cages and Blue Key Control Matter for Industrial Fleets',
-        'usa-standard-roll-cages-blue-key-industrial-fleets',
-        'Safety & HSE',
-        'Fleet Safety Engineering Team',
-        6,
-        'A technical look at rollover protection, driver access governance, and 24/7 mobile response for oil, gas, and mega-project contractors.',
-        `When corporate vehicles operate across desert highways, coastal causeways, and active energy project corridors—from Ras al Khair and Khafji to Yanbu and Jizan—standard showroom specifications are not enough.\n\nJadeer United equips industrial 4x4 fleets with certified roll bars and internal roll cages built to USA safety standards. Beyond structural protection, every vehicle is fitted with GPS vehicle tracking and Blue Key access control.\n\nBlue Key authentication ensures that only authorized, safety-briefed personnel can start and operate assigned vehicles, linking trip logs, harsh braking metrics, and speed compliance directly to individual drivers. Combined with our 24/7 mobile service crews and guaranteed replacement vehicles, project directors achieve uncompromising HSE compliance without sacrificing mobilization uptime.`,
-        '/assets/jadeer/land-cruiser-gr.jpg',
-        '2026-09-24',
-      ],
-      [
-        'Operational Leasing vs. Fleet Ownership: Calculating True 36-Month TCO in the Gulf',
-        'operational-leasing-vs-fleet-ownership-gcc-tco',
-        'Corporate Leasing',
-        'Corporate Advisory Team',
-        5,
-        'Comparing capital allocation, depreciation exposure, comprehensive cross-border insurance, and maintenance downtime across a 3-year cycle.',
-        `Many growing businesses initially purchase corporate vehicles outright, only to discover that acquisition cost represents less than half of total lifecycle expense. Unplanned repairs, cross-border insurance renewals between Bahrain, Saudi Arabia, and Oman, idle replacement costs during accidents, and resale depreciation quickly erode working capital.\n\nOperational leasing with Jadeer United consolidates vehicle acquisition, manufacturer-schedule maintenance, genuine spare parts, 700+ quick service facilities, door-to-door servicing, and replacement vehicle guarantees into a single predictable monthly operating expense.\n\nAs our founding ethos reminds us: "Success is never owned, is leased and the rent is due every day." By preserving balance-sheet capital for core business growth and delegating fleet uptime to a partner with 25+ years of management experience, enterprises scale faster and leaner.`,
-        '/assets/jadeer/jadeer-hq.jpg',
-        '2026-08-30',
-      ],
-      [
-        'Cross-Border Fleet Logistics: Seamless Mobility from Amwaj to Khobar, Riyadh, and Muscat',
-        'cross-border-fleet-logistics-bahrain-ksa-oman',
-        'Regional Network',
-        'GCC Operations Desk',
-        4,
-        'How Jadeer United coordinates regional insurance, branch support, and 24/7 mobile service crews across thirteen strategic Gulf hubs.',
-        `Regional engineering consultancies and multinational energy providers rarely confine operations to a single border. Teams routinely travel between our Amwaj headquarters in Bahrain, our Eastern Province branch in Khobar, project offices in Riyadh and Jeddah, industrial zones in Jubail and Rabigh, and our branch operations in Muscat, Oman.\n\nJadeer United removes cross-border friction with unified comprehensive insurance coverage spanning Bahrain, Saudi Arabia, and Oman, supported by a network of over 700 B2B quick service facilities. Whether a vehicle needs scheduled servicing in Yanbu or emergency mobile support near Tabuk, a single point of contact keeps your workforce moving.`,
-        '/assets/jadeer/land-cruiser-vxr.jpg',
-        '2026-08-05',
-      ],
-    ];
+    const insertReview = db.prepare(`
+      INSERT INTO client_reviews (
+        company, employee, position, date_of_service,
+        vehicle_condition, price_satisfaction, staff_behavior,
+        pickup_process, dropoff_process, cleanliness, value_for_money,
+        overall, would_recommend, comment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const r of REAL_REVIEWS) {
+      insertReview.run(
+        r.company,
+        r.employee,
+        r.position,
+        r.date_of_service,
+        r.vehicle_condition,
+        r.price_satisfaction,
+        r.staff_behavior,
+        r.pickup_process,
+        r.dropoff_process,
+        r.cleanliness,
+        r.value_for_money,
+        r.overall,
+        r.would_recommend,
+        r.comment
+      );
+    }
 
-    const tx = db.transaction(() => {
-      for (const a of seedArticles) {
-        insertArticle.run(...a);
-      }
-    });
-    tx();
-  }
+    // Seed sanitized corporate B2B quotations inspired by real organizations in the database
+    const landCruiserId = sourceIdToNewId.get(5) ?? null;
+    const patrolId = sourceIdToNewId.get(35) ?? null;
+    const corollaHybridId = sourceIdToNewId.get(42) ?? null;
+    const coasterId = sourceIdToNewId.get(20) ?? null;
 
-  const quoteCount = (db.prepare('SELECT COUNT(*) as count FROM quotation_requests').get() as { count: number }).count;
-  if (quoteCount === 0) {
     const insertQuote = db.prepare(`
       INSERT INTO quotation_requests (
         reference_code, full_name, company_name, client_type, email, phone,
-        country, city, vehicle_id, offer_id, fleet_quantity, lease_term_months,
+        country, city, vehicle_id, selected_trim, offer_id, fleet_quantity, lease_term_months,
         add_ons, notes, status, estimated_monthly_quote, admin_notes, routing_email
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const seedQuotes = [
+    const sanitizedQuotes = [
       [
-        'JU-2026-1041',
-        'Tariq Al-Qahtani',
-        'Nesma Industrial Infrastructure',
+        'JU-2026-2041',
+        'Procurement Desk',
+        'Velan Gulf Manufacturing Company',
         'corporate',
-        't.alqahtani@nesma-projects.example',
-        '+966 55 412 8890',
+        'procurement@velangulf.example',
+        '+966 55 000 4120',
+        'Saudi Arabia',
+        'Khobar / Dammam',
+        patrolId,
+        'LE T2',
+        insertedOfferIds[3] ?? null,
+        6,
+        48,
+        JSON.stringify({
+          driver_service: false,
+          limousine_service: false,
+          replacement_vehicle: true,
+          tracking_blue_key: true,
+          usa_roll_bars_cages: false,
+          hybrid_preference: false,
+        }),
+        '4-year operational lease contract inquiry for executive & field management vehicles in the Eastern Province.',
+        'new',
+        null,
+        '48-month corporate lease proposal in preparation by Khobar branch.',
+        'sales@jadeergulf.com',
+      ],
+      [
+        'JU-2026-2042',
+        'Fleet Operations Coordinator',
+        'TotalEnergies — Amiral Project',
+        'corporate',
+        'fleet.amiral@totalenergies-project.example',
+        '+966 54 000 8821',
         'Saudi Arabia',
         'Jubail',
-        2,
-        2,
-        14,
+        landCruiserId,
+        'GXR-3',
+        insertedOfferIds[0] ?? null,
+        12,
         36,
         JSON.stringify({
           driver_service: false,
@@ -576,25 +461,26 @@ function seedInitialData(): void {
           usa_roll_bars_cages: true,
           hybrid_preference: false,
         }),
-        'Required for Jubail & Ras al Khair petrochemical expansion phase. All units must include USA-standard internal roll cages and Blue Key shift tracking.',
-        'new',
-        null,
-        'Priority EPC contractor inquiry. Prepare volume tier pricing.',
+        'Amiral petrochemical project fleet mobilization requiring USA-standard roll cages, IVMS tracking, and 24/7 Jubail mobile support.',
+        'in_review',
+        74400,
+        'HSE specifications verified with Jadeer United Khobar workshop.',
         'sales@jadeergulf.com',
       ],
       [
-        'JU-2026-1042',
-        'Nadia Al-Khalifa',
-        'Gulf Sustainable Advisory W.L.L.',
+        'JU-2026-2043',
+        'Corporate Mobility Manager',
+        'Nesma United Industries LTD',
         'corporate',
-        'nadia.k@gulfsustainable.example',
-        '+973 3944 1205',
-        'Bahrain',
-        'Manama / Amwaj',
-        3,
-        1,
-        8,
-        48,
+        'mobility@nesma-united.example',
+        '+966 56 000 3319',
+        'Saudi Arabia',
+        'Riyadh / NEOM',
+        corollaHybridId,
+        '1.8L XLI Executive Hybrid',
+        insertedOfferIds[1] ?? null,
+        15,
+        36,
         JSON.stringify({
           driver_service: false,
           limousine_service: false,
@@ -603,92 +489,80 @@ function seedInitialData(): void {
           usa_roll_bars_cages: false,
           hybrid_preference: true,
         }),
-        'Transitioning consultant pool to Corolla Hybrid under our 2026 ESG target. Require Bahrain–KSA cross-border insurance.',
-        'in_review',
-        1640,
-        'Confirmed cross-border causeway insurance coverage included.',
+        'Expanding Vision 2030 hybrid corporate pool across Riyadh and NEOM project offices with 45,000 km tire maintenance intervals.',
+        'quoted',
+        34500,
+        'Formal SAR quotation delivered to lease unit supervisor.',
         'sales@jadeergulf.com',
       ],
       [
-        'JU-2026-1043',
-        'Salim Al-Harthy',
-        'Oman Energy Services LLC',
+        'JU-2026-2044',
+        'Transport Supervisor',
+        'Gulf Educational Services',
         'corporate',
-        's.alharthy@omanenergy.example',
-        '+968 9214 5531',
-        'Oman',
-        'Muscat',
-        1,
-        3,
+        'transport@gulfedu.example',
+        '+973 3900 1422',
+        'Bahrain',
+        'Amwaj / Manama',
+        coasterId,
+        '23-Seater Diesel STD',
+        insertedOfferIds[4] ?? null,
         4,
-        24,
+        36,
         JSON.stringify({
           driver_service: true,
-          limousine_service: true,
+          limousine_service: false,
           replacement_vehicle: true,
           tracking_blue_key: true,
           usa_roll_bars_cages: false,
           hybrid_preference: false,
         }),
-        'Executive Land Cruiser VX-R units with dedicated bilingual drivers for visiting engineering directors.',
-        'quoted',
-        3120,
-        'Proposal #Q-882 sent by Muscat branch manager on Nov 18.',
-        'sales@jadeergulf.com',
-      ],
-      [
-        'JU-2026-1044',
-        'Faisal Al-Zahrani',
-        '',
-        'individual',
-        'faisal.z@example.com',
-        '+966 50 778 3319',
-        'Saudi Arabia',
-        'Khobar',
-        7,
-        4,
-        1,
-        12,
-        JSON.stringify({
-          driver_service: false,
-          limousine_service: false,
-          replacement_vehicle: false,
-          tracking_blue_key: false,
-          usa_roll_bars_cages: false,
-          hybrid_preference: false,
-        }),
-        'Interested in viewing the certified 2023 Land Cruiser GXR at Khobar or Amwaj showroom this Saturday morning.',
+        'Requesting safe, high-reliability 23-seater shuttle buses with dedicated vetted drivers and GPS speed monitoring.',
         'approved',
-        null,
-        'Viewing appointment scheduled for Saturday 10:30 AM.',
+        26800,
+        'Approved by Amwaj HQ fleet desk; units scheduled for handover.',
         'sales@jadeergulf.com',
       ],
     ];
 
-    const tx = db.transaction(() => {
-      for (const q of seedQuotes) {
-        insertQuote.run(...q);
-      }
-    });
-    tx();
-  }
+    for (const q of sanitizedQuotes) {
+      insertQuote.run(...q);
+    }
 
-  const msgCount = (db.prepare('SELECT COUNT(*) as count FROM contact_messages').get() as { count: number }).count;
-  if (msgCount === 0) {
-    db.prepare(`
+    // Seed sanitized corporate contact messages (zero spam)
+    const insertMsg = db.prepare(`
       INSERT INTO contact_messages (
         full_name, company_name, email, phone, country, department, subject, message, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      'Hussain Al-Mansoor',
-      'Worley Regional Procurement',
-      'h.almansoor@worley-vendor.example',
-      '+966 54 902 1140',
+    `);
+
+    insertMsg.run(
+      'Amiral Project Fleet Desk',
+      'TotalEnergies Amiral Project',
+      'fleet.amiral@totalenergies-project.example',
+      '+966 54 000 8821',
       'Saudi Arabia',
-      'Customer Support',
-      'B2B Quick Service Center Directory Update',
-      'Could you share the updated list of quick service partner centers near Yanbu and Tabuk for our currently leased 22-vehicle fleet?',
+      'Sales Team',
+      'Long-Term Fleet Leasing Proposal — Jubail',
+      'We are coordinating new project vehicles for the Amiral Project in Jubail and would like to arrange a commercial review of Jadeer United operational leasing packages.',
       'unread'
     );
-  }
+    insertMsg.run(
+      'Regional Telematics Partnerships',
+      'Teltonika Telematics GCC',
+      'partnerships@teltonika-gcc.example',
+      '+973 1700 4410',
+      'Bahrain',
+      'General Inquiries',
+      'Next-Generation Fleet GPS & Blue Key Hardware Integration',
+      'Following up on fleet telematics and driver ID solutions for Jadeer United operational leasing vehicles across Saudi Arabia, Bahrain, and Oman.',
+      'read'
+    );
+
+    db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('db_import_version', ?)`).run(
+      TARGET_SEED_VERSION
+    );
+  });
+
+  tx();
 }

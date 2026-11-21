@@ -131,6 +131,8 @@ function formatVehicleRow(row: Record<string, unknown>) {
     model: row.model,
     year: row.year,
     category: row.category,
+    sub_type: row.sub_type || '',
+    service_type: row.service_type || 'leasing',
     listing_type: row.listing_type,
     fuel_type: row.fuel_type,
     transmission: row.transmission,
@@ -143,6 +145,9 @@ function formatVehicleRow(row: Record<string, unknown>) {
     image_url: row.image_url || '',
     description: row.description,
     safety_telematics_specs: parseJsonSafe<string[]>(row.safety_telematics_specs as string, []),
+    trims: parseJsonSafe<Array<{ trim: string; price: number }>>(row.trims as string, []),
+    specs: parseJsonSafe<Record<string, string | null>>(row.specs_json as string, {}),
+    colors: parseJsonSafe<string[]>(row.colors as string, []),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -152,8 +157,10 @@ function formatOfferRow(row: Record<string, unknown>) {
   return {
     id: row.id,
     title: row.title,
+    title_ar: row.title_ar || '',
     slug: row.slug,
     subtitle: row.subtitle,
+    subtitle_ar: row.subtitle_ar || '',
     category: row.category,
     monthly_rate_from: row.monthly_rate_from,
     currency: row.currency,
@@ -162,9 +169,44 @@ function formatOfferRow(row: Record<string, unknown>) {
     is_active: Boolean(row.is_active),
     highlights: parseJsonSafe<string[]>(row.highlights as string, []),
     description: row.description,
+    description_ar: row.description_ar || '',
     image_url: row.image_url || '',
+    vehicle_id: row.vehicle_id ?? null,
     created_at: row.created_at,
   };
+}
+
+function formatReviewRow(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    company: row.company,
+    employee: row.employee,
+    position: row.position || '',
+    date_of_service: row.date_of_service,
+    vehicle_condition: row.vehicle_condition,
+    price_satisfaction: row.price_satisfaction,
+    staff_behavior: row.staff_behavior,
+    pickup_process: row.pickup_process,
+    dropoff_process: row.dropoff_process,
+    cleanliness: row.cleanliness,
+    value_for_money: row.value_for_money,
+    overall: row.overall,
+    would_recommend: Boolean(row.would_recommend),
+    comment: row.comment || '',
+    created_at: row.created_at,
+  };
+}
+
+function getSiteContentMap(): Record<string, string> {
+  const rows = db.prepare(`SELECT key, value FROM site_content`).all() as Array<{
+    key: string;
+    value: string;
+  }>;
+  const map: Record<string, string> = {};
+  for (const r of rows) {
+    map[r.key] = r.value;
+  }
+  return map;
 }
 
 function formatQuotationRow(row: Record<string, unknown>) {
@@ -179,6 +221,7 @@ function formatQuotationRow(row: Record<string, unknown>) {
     country: row.country,
     city: row.city,
     vehicle_id: row.vehicle_id ?? null,
+    selected_trim: row.selected_trim || '',
     vehicle_label: row.vehicle_make ? `${row.vehicle_year} ${row.vehicle_make} ${row.vehicle_model}` : null,
     vehicle_listing_type: row.vehicle_listing_type ?? null,
     offer_id: row.offer_id ?? null,
@@ -250,33 +293,112 @@ function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFuncti
 app.get('/api/home', (_req: Request, res: Response) => {
   const showroomFeatured = db
     .prepare(
-      `SELECT * FROM vehicles WHERE listing_type = 'showroom' AND status != 'sold' ORDER BY is_featured DESC, id ASC LIMIT 4`
+      `SELECT * FROM vehicles WHERE listing_type = 'showroom' AND status != 'sold' ORDER BY is_featured DESC, id ASC LIMIT 6`
     )
     .all()
     .map((r) => formatVehicleRow(r as Record<string, unknown>));
 
   const usedFeatured = db
     .prepare(
-      `SELECT * FROM vehicles WHERE listing_type = 'used' AND status != 'sold' ORDER BY is_featured DESC, id ASC LIMIT 3`
+      `SELECT * FROM vehicles WHERE listing_type = 'used' AND status = 'available' ORDER BY is_featured DESC, id ASC LIMIT 3`
     )
     .all()
     .map((r) => formatVehicleRow(r as Record<string, unknown>));
 
   const offers = db
-    .prepare(`SELECT * FROM offers WHERE is_active = 1 ORDER BY id ASC LIMIT 3`)
+    .prepare(`SELECT * FROM offers WHERE is_active = 1 ORDER BY id ASC LIMIT 4`)
     .all()
     .map((r) => formatOfferRow(r as Record<string, unknown>));
 
   const articles = db
-    .prepare(`SELECT * FROM articles ORDER BY published_at DESC LIMIT 3`)
+    .prepare(`SELECT * FROM articles ORDER BY published_at DESC, id DESC LIMIT 4`)
     .all();
 
-  res.json({ showroomFeatured, usedFeatured, offers, articles });
+  const reviews = db
+    .prepare(`SELECT * FROM client_reviews ORDER BY overall DESC, id DESC LIMIT 6`)
+    .all()
+    .map((r) => formatReviewRow(r as Record<string, unknown>));
+
+  const siteContent = getSiteContentMap();
+
+  res.json({ showroomFeatured, usedFeatured, offers, articles, reviews, siteContent });
+});
+
+app.get('/api/site-content', (_req: Request, res: Response) => {
+  const content = getSiteContentMap();
+  const branches = db
+    .prepare(`SELECT * FROM branches ORDER BY is_hq DESC, id ASC`)
+    .all()
+    .map((b) => ({
+      ...(b as Record<string, unknown>),
+      is_hq: Boolean((b as Record<string, unknown>).is_hq),
+    }));
+  const workshops = db.prepare(`SELECT * FROM workshops ORDER BY id ASC`).all();
+  const reviews = db
+    .prepare(`SELECT * FROM client_reviews ORDER BY id DESC`)
+    .all()
+    .map((r) => formatReviewRow(r as Record<string, unknown>));
+  res.json({ content, branches, workshops, reviews });
+});
+
+app.get('/api/reviews', (_req: Request, res: Response) => {
+  const reviews = db
+    .prepare(`SELECT * FROM client_reviews ORDER BY id DESC`)
+    .all()
+    .map((r) => formatReviewRow(r as Record<string, unknown>));
+  res.json({ reviews });
+});
+
+app.post('/api/reviews', (req: Request, res: Response) => {
+  const b = req.body || {};
+  const company = String(b.company || '').trim().slice(0, 120);
+  const employee = String(b.employee || '').trim().slice(0, 100);
+  const position = String(b.position || 'Fleet Coordinator').trim().slice(0, 100);
+  const dateOfService = String(b.date_of_service || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const comment = String(b.comment || '').trim().slice(0, 1500);
+  const clamp = (v: unknown, def = 5) => Math.max(1, Math.min(5, Number(v) || def));
+
+  if (company.length < 2 || employee.length < 2 || comment.length < 8) {
+    res.status(422).json({ error: 'Please provide company name, your name, and feedback comment.' });
+    return;
+  }
+
+  const info = db
+    .prepare(
+      `INSERT INTO client_reviews (
+        company, employee, position, date_of_service,
+        vehicle_condition, price_satisfaction, staff_behavior,
+        pickup_process, dropoff_process, cleanliness, value_for_money,
+        overall, would_recommend, comment
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      company,
+      employee,
+      position,
+      dateOfService,
+      clamp(b.vehicle_condition, 5),
+      clamp(b.price_satisfaction, 4),
+      clamp(b.staff_behavior, 5),
+      clamp(b.pickup_process, 5),
+      clamp(b.dropoff_process, 5),
+      clamp(b.cleanliness, 5),
+      clamp(b.value_for_money, 4),
+      clamp(b.overall, 5),
+      b.would_recommend === false ? 0 : 1,
+      comment
+    );
+
+  const created = db
+    .prepare(`SELECT * FROM client_reviews WHERE id = ?`)
+    .get(info.lastInsertRowid) as Record<string, unknown>;
+  res.status(201).json({ review: formatReviewRow(created) });
 });
 
 app.get('/api/vehicles', (req: Request, res: Response) => {
   const listingType = typeof req.query.listing_type === 'string' ? req.query.listing_type.trim() : '';
   const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
+  const make = typeof req.query.make === 'string' ? req.query.make.trim() : '';
   const country = typeof req.query.country === 'string' ? req.query.country.trim() : '';
   const fuelType = typeof req.query.fuel_type === 'string' ? req.query.fuel_type.trim() : '';
   const transmission = typeof req.query.transmission === 'string' ? req.query.transmission.trim() : '';
@@ -292,16 +414,24 @@ app.get('/api/vehicles', (req: Request, res: Response) => {
     params.push(listingType);
   }
   if (category && category !== 'All') {
-    conditions.push('category = ?');
-    params.push(category);
+    if (category === 'Hybrid') {
+      conditions.push("(category = 'Hybrid' OR LOWER(fuel_type) LIKE '%hybrid%' OR LOWER(model) LIKE '%hybrid%')");
+    } else {
+      conditions.push('category = ?');
+      params.push(category);
+    }
+  }
+  if (make && make !== 'All') {
+    conditions.push('LOWER(make) = ?');
+    params.push(make.toLowerCase());
   }
   if (fuelType && fuelType !== 'All') {
-    conditions.push('fuel_type = ?');
-    params.push(fuelType);
+    conditions.push('LOWER(fuel_type) LIKE ?');
+    params.push(`%${fuelType.toLowerCase()}%`);
   }
   if (transmission && transmission !== 'All') {
-    conditions.push('transmission = ?');
-    params.push(transmission);
+    conditions.push('LOWER(transmission) LIKE ?');
+    params.push(`%${transmission.toLowerCase()}%`);
   }
   if (year > 2000) {
     conditions.push('year = ?');
@@ -316,14 +446,18 @@ app.get('/api/vehicles', (req: Request, res: Response) => {
     params.push(`%"${country}"%`);
   }
   if (search) {
-    conditions.push('(LOWER(make) LIKE ? OR LOWER(model) LIKE ? OR LOWER(description) LIKE ? OR LOWER(category) LIKE ?)');
+    conditions.push('(LOWER(make) LIKE ? OR LOWER(model) LIKE ? OR LOWER(description) LIKE ? OR LOWER(category) LIKE ? OR LOWER(trims) LIKE ?)');
     const like = `%${search}%`;
-    params.push(like, like, like, like);
+    params.push(like, like, like, like, like);
   }
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const rows = db
-    .prepare(`SELECT * FROM vehicles ${whereSql} ORDER BY is_featured DESC, year DESC, id DESC`)
+    .prepare(
+      `SELECT * FROM vehicles ${whereSql}
+       ORDER BY CASE WHEN status = 'available' THEN 0 WHEN status = 'reserved' THEN 1 ELSE 2 END,
+                is_featured DESC, year DESC, id ASC`
+    )
     .all(...params)
     .map((r) => formatVehicleRow(r as Record<string, unknown>));
 
@@ -368,14 +502,16 @@ app.get('/api/articles', (req: Request, res: Response) => {
     params.push(category);
   }
   if (search) {
-    conditions.push('(LOWER(title) LIKE ? OR LOWER(excerpt) LIKE ? OR LOWER(body) LIKE ?)');
+    conditions.push(
+      '(LOWER(title) LIKE ? OR LOWER(title_ar) LIKE ? OR LOWER(excerpt) LIKE ? OR LOWER(body) LIKE ? OR LOWER(body_ar) LIKE ?)'
+    );
     const like = `%${search}%`;
-    params.push(like, like, like);
+    params.push(like, like, like, like, like);
   }
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const rows = db
-    .prepare(`SELECT * FROM articles ${whereSql} ORDER BY published_at DESC`)
+    .prepare(`SELECT * FROM articles ${whereSql} ORDER BY published_at DESC, id DESC`)
     .all(...params);
   res.json({ articles: rows });
 });
@@ -388,7 +524,9 @@ app.get('/api/articles/:slug', (req: Request, res: Response) => {
     return;
   }
   const more = db
-    .prepare('SELECT id, title, slug, category, published_at, read_time_minutes FROM articles WHERE slug != ? ORDER BY published_at DESC LIMIT 3')
+    .prepare(
+      'SELECT id, title, title_ar, slug, category, published_at, read_time_minutes FROM articles WHERE slug != ? ORDER BY published_at DESC LIMIT 4'
+    )
     .all(slug);
   res.json({ article, more });
 });
@@ -408,6 +546,7 @@ app.post('/api/quotations', (req: Request, res: Response) => {
   const country = String(body.country || '').trim();
   const city = String(body.city || '').trim();
   const vehicleId = body.vehicle_id ? Number(body.vehicle_id) : null;
+  const selectedTrim = String(body.selected_trim || '').trim().slice(0, 120);
   const offerId = body.offer_id ? Number(body.offer_id) : null;
   const fleetQuantity = Math.max(1, Math.min(500, Number(body.fleet_quantity) || 1));
   const leaseTermMonths = Math.max(1, Math.min(84, Number(body.lease_term_months) || 36));
@@ -472,9 +611,9 @@ app.post('/api/quotations', (req: Request, res: Response) => {
     .prepare(
       `INSERT INTO quotation_requests (
         reference_code, full_name, company_name, client_type, email, phone,
-        country, city, vehicle_id, offer_id, fleet_quantity, lease_term_months,
+        country, city, vehicle_id, selected_trim, offer_id, fleet_quantity, lease_term_months,
         add_ons, notes, status, routing_email
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)`
     )
     .run(
       referenceCode,
@@ -486,6 +625,7 @@ app.post('/api/quotations', (req: Request, res: Response) => {
       country,
       city,
       validVehicleId,
+      selectedTrim,
       validOfferId,
       fleetQuantity,
       leaseTermMonths,
@@ -696,6 +836,9 @@ app.get('/api/admin/dashboard', requireAdmin, (_req: AuthenticatedRequest, res: 
   const unreadMessages = (
     db.prepare(`SELECT COUNT(*) as c FROM contact_messages WHERE status = 'unread'`).get() as { c: number }
   ).c;
+  const totalReviews = (
+    db.prepare(`SELECT COUNT(*) as c FROM client_reviews`).get() as { c: number }
+  ).c;
 
   const recentQuotations = db
     .prepare(
@@ -717,6 +860,7 @@ app.get('/api/admin/dashboard', requireAdmin, (_req: AuthenticatedRequest, res: 
       totalQuotations,
       pendingQuotations,
       unreadMessages,
+      totalReviews,
     },
     recentQuotations,
   });
@@ -725,7 +869,17 @@ app.get('/api/admin/dashboard', requireAdmin, (_req: AuthenticatedRequest, res: 
 // Admin Vehicles CRUD
 const VALID_LISTING_TYPES = new Set(['showroom', 'used']);
 const VALID_VEHICLE_STATUSES = new Set(['available', 'reserved', 'leased', 'sold']);
-const VALID_CATEGORIES = new Set(['SUV', 'Sedan', 'Fleet', 'Hybrid', 'Limousine', 'Commercial']);
+const VALID_CATEGORIES = new Set([
+  'SUV',
+  'Sedan',
+  'Hybrid',
+  'Pick-Up',
+  'Bus',
+  'Cross-Over',
+  'Fleet',
+  'Limousine',
+  'Commercial',
+]);
 
 app.get('/api/admin/vehicles', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   const listingType = typeof req.query.listing_type === 'string' ? req.query.listing_type.trim() : '';
@@ -762,7 +916,7 @@ function parseVehiclePayload(req: Request) {
   const transmission = String(b.transmission || 'Automatic').trim();
   const mileage_km = Math.max(0, Number(b.mileage_km) || 0);
   const price_or_monthly_rate = Number(b.price_or_monthly_rate);
-  const currency = ['BHD', 'SAR', 'OMR'].includes(String(b.currency || 'BHD')) ? String(b.currency) : 'BHD';
+  const currency = ['SAR', 'BHD', 'OMR'].includes(String(b.currency || 'SAR')) ? String(b.currency) : 'SAR';
   const status = String(b.status || 'available').trim();
   const is_featured = b.is_featured === true || b.is_featured === 'true' || b.is_featured === '1' || b.is_featured === 1 ? 1 : 0;
   const description = String(b.description || '').trim();
@@ -1119,6 +1273,25 @@ app.patch('/api/admin/messages/:id', requireAdmin, (req: AuthenticatedRequest, r
   }
   db.prepare(`UPDATE contact_messages SET status = ? WHERE id = ?`).run(status, id);
   res.json({ ok: true });
+});
+
+// Admin Client Reviews Moderation
+app.get('/api/admin/reviews', requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+  const reviews = db
+    .prepare(`SELECT * FROM client_reviews ORDER BY id DESC`)
+    .all()
+    .map((r) => formatReviewRow(r as Record<string, unknown>));
+  res.json({ reviews });
+});
+
+app.delete('/api/admin/reviews/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid review ID' });
+    return;
+  }
+  db.prepare(`DELETE FROM client_reviews WHERE id = ?`).run(id);
+  res.json({ deleted: true });
 });
 
 // Multer & Express JSON error handler

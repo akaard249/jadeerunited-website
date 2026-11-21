@@ -2,13 +2,17 @@ import type {
   AdminDashboardStats,
   AdminUser,
   Article,
+  BranchRecord,
+  ClientReview,
   ContactMessageRecord,
   Offer,
   QuotationAddOns,
   QuotationRequestRecord,
   QuotationStatus,
+  SiteContent,
   Vehicle,
   VehicleStatus,
+  WorkshopRecord,
 } from '../types';
 
 // Keep admin session token strictly in memory (never localStorage or sessionStorage)
@@ -52,7 +56,35 @@ export const api = {
       usedFeatured: Vehicle[];
       offers: Offer[];
       articles: Article[];
+      reviews: ClientReview[];
+      siteContent: Partial<SiteContent>;
     }>('/api/home'),
+
+  getSiteContent: () =>
+    requestJson<{
+      content: Partial<SiteContent>;
+      branches: BranchRecord[];
+      workshops: WorkshopRecord[];
+      reviews: ClientReview[];
+    }>('/api/site-content'),
+
+  getReviews: () => requestJson<{ reviews: ClientReview[] }>('/api/reviews'),
+
+  submitReview: (payload: {
+    company: string;
+    employee: string;
+    position: string;
+    vehicle_condition: number;
+    staff_behavior: number;
+    value_for_money: number;
+    overall: number;
+    would_recommend: boolean;
+    comment: string;
+  }) =>
+    requestJson<{ review: ClientReview }>('/api/reviews', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   getVehicles: (params: Record<string, string | number | undefined> = {}) => {
     const qs = new URLSearchParams();
@@ -81,7 +113,9 @@ export const api = {
   getArticle: (slug: string) =>
     requestJson<{
       article: Article;
-      more: Array<Pick<Article, 'id' | 'title' | 'slug' | 'category' | 'published_at' | 'read_time_minutes'>>;
+      more: Array<
+        Pick<Article, 'id' | 'title' | 'title_ar' | 'slug' | 'category' | 'published_at' | 'read_time_minutes'>
+      >;
     }>(`/api/articles/${encodeURIComponent(slug)}`),
 
   submitQuotation: (payload: {
@@ -93,6 +127,7 @@ export const api = {
     country: string;
     city: string;
     vehicle_id: number | null;
+    selected_trim?: string;
     offer_id: number | null;
     fleet_quantity: number;
     lease_term_months: number;
@@ -212,4 +247,10 @@ export const api = {
       { method: 'PATCH', body: JSON.stringify({ status }) },
       true
     ),
+
+  getAdminReviews: () =>
+    requestJson<{ reviews: ClientReview[] }>('/api/admin/reviews', {}, true),
+
+  deleteAdminReview: (id: number) =>
+    requestJson<{ deleted: boolean }>(`/api/admin/reviews/${id}`, { method: 'DELETE' }, true),
 };
