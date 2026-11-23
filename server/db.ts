@@ -29,6 +29,100 @@ function ensureColumn(table: string, column: string, definition: string): void {
   }
 }
 
+export function slugifySegment(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'item';
+}
+
+export function resolveUniqueVehicleSlugs(
+  listingType: string,
+  make: string,
+  model: string,
+  year: number,
+  excludeId?: number
+): { brand_slug: string; model_slug: string } {
+  const brandSlug = slugifySegment(make);
+  const baseModelSlug = slugifySegment(model);
+
+  const exists = (candidate: string): boolean => {
+    const row = excludeId
+      ? db
+          .prepare(
+            `SELECT id FROM vehicles WHERE listing_type = ? AND brand_slug = ? AND model_slug = ? AND id != ? LIMIT 1`
+          )
+          .get(listingType, brandSlug, candidate, excludeId)
+      : db
+          .prepare(
+            `SELECT id FROM vehicles WHERE listing_type = ? AND brand_slug = ? AND model_slug = ? LIMIT 1`
+          )
+          .get(listingType, brandSlug, candidate);
+    return Boolean(row);
+  };
+
+  if (!exists(baseModelSlug)) {
+    return { brand_slug: brandSlug, model_slug: baseModelSlug };
+  }
+  const withYear = `${baseModelSlug}-${year}`;
+  if (!exists(withYear)) {
+    return { brand_slug: brandSlug, model_slug: withYear };
+  }
+  let counter = 2;
+  while (exists(`${withYear}-${counter}`)) {
+    counter++;
+  }
+  return { brand_slug: brandSlug, model_slug: `${withYear}-${counter}` };
+}
+
+function backfillVehicleSlugs(): void {
+  const rows = db
+    .prepare(`SELECT id, listing_type, make, model, year, brand_slug, model_slug FROM vehicles ORDER BY id ASC`)
+    .all() as Array<{
+    id: number;
+    listing_type: string;
+    make: string;
+    model: string;
+    year: number;
+    brand_slug: string;
+    model_slug: string;
+  }>;
+
+  const missingOrBlank = rows.some((r) => !r.brand_slug || !r.model_slug);
+  if (!missingOrBlank) return;
+
+  // Count natural (listing_type, brandSlug, baseModelSlug) collisions so duplicates get clean -year suffixes
+  const pairCounts = new Map<string, number>();
+  for (const r of rows) {
+    const key = `${r.listing_type}::${slugifySegment(r.make)}::${slugifySegment(r.model)}`;
+    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+  }
+
+  const used = new Set<string>();
+  const update = db.prepare(`UPDATE vehicles SET brand_slug = ?, model_slug = ? WHERE id = ?`);
+
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      const brandSlug = slugifySegment(r.make);
+      const baseModelSlug = slugifySegment(r.model);
+      const naturalKey = `${r.listing_type}::${brandSlug}::${baseModelSlug}`;
+
+      let candidate =
+        (pairCounts.get(naturalKey) || 0) > 1 ? `${baseModelSlug}-${r.year}` : baseModelSlug;
+      let uniqueKey = `${r.listing_type}::${brandSlug}::${candidate}`;
+      if (used.has(uniqueKey)) {
+        candidate = `${baseModelSlug}-${r.year}-${r.id}`;
+        uniqueKey = `${r.listing_type}::${brandSlug}::${candidate}`;
+      }
+      used.add(uniqueKey);
+      update.run(brandSlug, candidate, r.id);
+    }
+  });
+  tx();
+}
+
 export function initializeDatabase(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
@@ -203,6 +297,17 @@ export function initializeDatabase(): void {
       phone TEXT NOT NULL,
       hours TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS about_gallery (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      title_ar TEXT NOT NULL DEFAULT '',
+      caption TEXT NOT NULL DEFAULT '',
+      caption_ar TEXT NOT NULL DEFAULT '',
+      image_url TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Safe column upgrades for pre-existing SQLite databases
@@ -211,6 +316,8 @@ export function initializeDatabase(): void {
   ensureColumn('vehicles', 'colors', `TEXT NOT NULL DEFAULT '[]'`);
   ensureColumn('vehicles', 'sub_type', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('vehicles', 'service_type', `TEXT NOT NULL DEFAULT 'leasing'`);
+  ensureColumn('vehicles', 'brand_slug', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('vehicles', 'model_slug', `TEXT NOT NULL DEFAULT ''`);
 
   ensureColumn('offers', 'title_ar', `TEXT NOT NULL DEFAULT ''`);
   ensureColumn('offers', 'subtitle_ar', `TEXT NOT NULL DEFAULT ''`);
@@ -224,7 +331,268 @@ export function initializeDatabase(): void {
 
   ensureColumn('quotation_requests', 'selected_trim', `TEXT DEFAULT ''`);
 
+  ensureColumn('admin_users', 'role', `TEXT NOT NULL DEFAULT 'super_admin'`);
+  ensureColumn('admin_users', 'privileges', `TEXT NOT NULL DEFAULT '["vehicles","quotations","website","admins"]'`);
+  ensureColumn('admin_users', 'is_active', `INTEGER NOT NULL DEFAULT 1`);
+
+  ensureColumn('branches', 'address', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('branches', 'hours', `TEXT NOT NULL DEFAULT 'Sun–Thu · 8:30 AM – 5:30 PM'`);
+  ensureColumn('branches', 'map_x', `REAL NOT NULL DEFAULT 565`);
+  ensureColumn('branches', 'map_y', `REAL NOT NULL DEFAULT 256`);
+  ensureColumn('branches', 'focus', `TEXT NOT NULL DEFAULT ''`);
+
+  ensureColumn('workshops', 'address', `TEXT NOT NULL DEFAULT ''`);
+  ensureColumn('workshops', 'map_x', `REAL NOT NULL DEFAULT 554`);
+  ensureColumn('workshops', 'map_y', `REAL NOT NULL DEFAULT 274`);
+
   applyRealDbMigrationIfNeeded();
+  backfillVehicleSlugs();
+  seedCmsDefaultsIfMissing();
+}
+
+function seedCmsDefaultsIfMissing(): void {
+  const defaultSiteContent: Record<string, string> = {
+    hero_image_url: '/assets/jadeer/land-cruiser-studio.jpg',
+    hero_tagline_en: 'Drive Your Business Forward',
+    hero_tagline_ar: 'انطلق بأعمالك نحو المستقبل',
+    hero_headline_en: 'Transportation solutions that drive ',
+    hero_headline_highlight_en: 'business success',
+    hero_headline_suffix_en: ' and sustainability.',
+    hero_headline_ar: 'حلول نقل مبتكرة تقود ',
+    hero_headline_highlight_ar: 'نجاح أعمالك',
+    hero_headline_suffix_ar: ' واستدامتها.',
+    hero_subtitle_en:
+      'Jadeer United delivers corporate operational leasing, Vision 2030 hybrid fleets, short- and long-term rentals, and certified vehicle sales — operating 3,000+ vehicles across Bahrain, Saudi Arabia, and Oman.',
+    hero_subtitle_ar:
+      'تقدم جدير المتحدة التأجير التشغيلي للشركات، وأساطيل المركبات الهجينة المتوافقة مع رؤية 2030، وتأجير وبيع السيارات الجديدة والمستعملة المعتمدة بأسطول يتجاوز 3,000 مركبة في البحرين والسعودية وعُمان.',
+    hero_quote_en: 'Success is never owned, is leased and the rent is due Every day.',
+    hero_card_eyebrow_en: 'Corporate Operational Leasing & Site-Ready Fleets',
+    hero_card_eyebrow_ar: 'التأجير التشغيلي للشركات والأساطيل المجهزة للمشاريع',
+    hero_card_caption_en:
+      'Comprehensive GCC Insurance · GPS & Blue Key Control · USA-Standard Roll Cages',
+    hero_card_caption_ar:
+      'تأمين شامل لدول الخليج · تتبع GPS ومفتاح أزرق · أقفاص حماية بمعايير أمريكية',
+    about_hq_image_url: '/assets/jadeer/jadeer-hq.jpg',
+    about_vision_image_url: '/assets/jadeer/rav4-studio.jpg',
+    about_strategic_title_en:
+      'Advancing digital capabilities, regional expansion, and hybrid vehicle leasing.',
+    about_strategic_title_ar:
+      'تعزيز القدرات الرقمية والتوسع الإقليمي وتأجير المركبات الهجينة.',
+    about_strategic_p1_en:
+      'Our strategic plan focuses on enhancing digital fleet capabilities, expanding market penetration across Bahrain, Saudi Arabia, and Oman, and introducing sustainable transportation solutions such as hybrid vehicle leasing.',
+    about_strategic_p2_en:
+      'We are committed to continuous innovation to keep pace with evolving enterprise requirements and align directly with global standards alongside Bahrain, Saudi Arabia, and Oman Vision 2030 sustainability initiatives.',
+    contact_sales_email: 'sales@jadeergulf.com',
+    contact_support_email: 'Maisara@jadeergulf.com',
+    contact_general_email: 'info@jadeergulf.com',
+    contact_bahrain_phone: '+973 6666 6064',
+    contact_ksa_phone: '+966 56 887 7769',
+    contact_oman_phone: '+968 7745 9000',
+    contact_ops_phone: '+966 54 316 8080',
+    contact_workshop_phone: '+966 54 307 4915',
+    contact_hours_en: 'Sun–Thu · 8:30 AM – 5:30 PM | Fri: Closed | Sat · 9:00 AM – 1:00 PM',
+    contact_hours_short_en: 'Sun–Thu 8:30–5:30 · Sat 9–1',
+    contact_hq_summary_en: 'Amwaj, Bahrain · King Faisal Road, Khobar · Muscat, Oman',
+    contact_sales_lead: 'Hatem Sabry · GCC Sales Desk',
+    contact_ops_lead: 'Tamer Ismaeil · Fleet Operations',
+    contact_workshop_lead: 'Maisara · Support & 24/7 Mobile Crew',
+    contact_hero_title_en: 'Every question deserves an answer.',
+    contact_hero_subtitle_en:
+      'Reach the right team directly across Bahrain, Saudi Arabia, and Oman. Available Sunday through Thursday, 8:30 AM – 5:30 PM & Saturday 9:00 AM – 1:00 PM.',
+  };
+
+  const insertIgnore = db.prepare(`INSERT OR IGNORE INTO site_content (key, value) VALUES (?, ?)`);
+  for (const [k, v] of Object.entries(defaultSiteContent)) {
+    insertIgnore.run(k, v);
+  }
+
+  // Seed About Us Gallery once if empty
+  const galleryCount = (db.prepare(`SELECT COUNT(*) as c FROM about_gallery`).get() as { c: number }).c;
+  if (galleryCount === 0) {
+    const insertGallery = db.prepare(`
+      INSERT INTO about_gallery (title, title_ar, caption, caption_ar, image_url, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const initialGallery = [
+      {
+        title: 'Jadeer United Regional Headquarters',
+        title_ar: 'المقر الإقليمي لجدير المتحدة',
+        caption: 'Corporate operations command serving Bahrain, Saudi Arabia, and Oman since 2009.',
+        caption_ar: 'مركز العمليات المؤسسية لخدمة البحرين والسعودية وعُمان منذ عام 2009.',
+        image_url: '/assets/jadeer/jadeer-hq.jpg',
+        sort_order: 1,
+      },
+      {
+        title: 'Flagship Executive 4x4 Fleet',
+        title_ar: 'أسطول الدفع الرباعي التنفيذي',
+        caption: 'Toyota Land Cruiser & Nissan Patrol units configured for GCC executive and site transport.',
+        caption_ar: 'مركبات لاندكروزر وباترول مجهزة للنقل التنفيذي ومواقع المشاريع الكبرى.',
+        image_url: '/assets/jadeer/land-cruiser-studio.jpg',
+        sort_order: 2,
+      },
+      {
+        title: 'Vision 2030 Hybrid Mobility',
+        title_ar: 'أساطيل الهجين المتوافقة مع رؤية 2030',
+        caption: 'Low-emission hybrid SUVs and sedans accelerating corporate ESG fleet transitions.',
+        caption_ar: 'سيارات هجينة منخفضة الانبعاثات تدعم التحول المستدام لأساطيل الشركات.',
+        image_url: '/assets/jadeer/rav4-studio.jpg',
+        sort_order: 3,
+      },
+      {
+        title: 'Industrial & EPC Field Readiness',
+        title_ar: 'جاهزية المواقع الصناعية والطاقة',
+        caption: 'Site-ready pickup fleets equipped with GPS telematics, Blue Key, and USA-standard roll cages.',
+        caption_ar: 'أساطيل بيك أب مجهزة بأنظمة التتبع والمفتاح الأزرق وأقفاص الحماية المعتمدة.',
+        image_url: '/assets/jadeer/hilux-studio.jpg',
+        sort_order: 4,
+      },
+      {
+        title: 'Executive Sedan & Limousine Class',
+        title_ar: 'فئة السيدان والليموزين التنفيذية',
+        caption: 'Chauffeur-driven sedans and VIP corporate transfers across major GCC business hubs.',
+        caption_ar: 'خدمات النقل التنفيذي والليموزين بسائقين محترفين في أبرز مراكز الأعمال.',
+        image_url: '/assets/jadeer/camry-studio.jpg',
+        sort_order: 5,
+      },
+      {
+        title: 'Workforce & Shuttle Fleet Operations',
+        title_ar: 'أساطيل نقل الكوادر والمشاريع',
+        caption: 'Coaster and Hiace shuttle fleets supported by 700+ quick service facilities and 24/7 mobile crews.',
+        caption_ar: 'حافلات نقل موثوقة مدعومة بأكثر من 700 مركز خدمة سريعة وصيانة متنقلة 24/7.',
+        image_url: '/assets/jadeer/coaster-studio.jpg',
+        sort_order: 6,
+      },
+    ];
+    for (const item of initialGallery) {
+      insertGallery.run(
+        item.title,
+        item.title_ar,
+        item.caption,
+        item.caption_ar,
+        item.image_url,
+        item.sort_order
+      );
+    }
+  }
+
+  // Backfill branch addresses, coordinates, hours, and focus when empty
+  const cityMeta: Record<string, { address: string; hours: string; x: number; y: number; focus: string }> = {
+    amwaj: {
+      address: 'Amwaj Islands & Southern Governorate, Bahrain',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM · Sat 9:00 AM – 1:00 PM',
+      x: 598,
+      y: 248,
+      focus: 'Regional Headquarters, Corporate Leasing & Executive Mobility',
+    },
+    khobar: {
+      address: 'King Faisal Road, Al Khobar, Eastern Province',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 565,
+      y: 256,
+      focus: 'Saudi Arabia HQ, Energy Sector Fleets & Operational Hub',
+    },
+    muscat: {
+      address: 'Al Ghubrah Commercial District, Muscat, Oman',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 816,
+      y: 356,
+      focus: 'Oman Operational Leasing, Hybrid Fleets & Project Mobilization',
+    },
+    riyadh: {
+      address: 'King Fahd Corridor, Riyadh',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 472,
+      y: 318,
+      focus: 'Central Region Corporate Leasing & Vision 2030 Accounts',
+    },
+    jeddah: {
+      address: 'Al Madinah Road, Jeddah — Western Region',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 266,
+      y: 410,
+      focus: 'Western Region Fleet Operations & Red Sea Logistics',
+    },
+    neom: {
+      address: 'NEOM Project Logistics Corridor, Tabuk Region',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM · 24/7 Mobile Crew',
+      x: 196,
+      y: 174,
+      focus: 'Mega-Project Mobilization & HSE-Compliant Site Fleets',
+    },
+    jizan: {
+      address: 'Jizan Economic City & Coastal Fleet Hub',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 318,
+      y: 495,
+      focus: 'Southern Industrial & Maritime Fleet Support',
+    },
+    khafji: {
+      address: 'Al Khafji Industrial Zone, Eastern Province',
+      hours: 'Sun–Thu · 8:00 AM – 5:30 PM',
+      x: 512,
+      y: 158,
+      focus: 'Northern Eastern Province Energy & EPC Fleet Support',
+    },
+    turaif: {
+      address: 'Northern Borders Energy Logistics Park, Turaif',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+      x: 298,
+      y: 108,
+      focus: 'Northern Borders Mining & Industrial Mobility',
+    },
+  };
+
+  const branches = db
+    .prepare(`SELECT id, city, country, address FROM branches`)
+    .all() as Array<{ id: number; city: string; country: string; address: string }>;
+  const updateBranch = db.prepare(
+    `UPDATE branches SET address = ?, hours = ?, map_x = ?, map_y = ?, focus = ? WHERE id = ?`
+  );
+  for (const b of branches) {
+    if (!b.address) {
+      const key = b.city.toLowerCase().trim();
+      const matched = cityMeta[key] || {
+        address: `${b.city}, ${b.country}`,
+        hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+        x: 472,
+        y: 318,
+        focus: 'Regional Fleet Operations & Customer Support',
+      };
+      updateBranch.run(matched.address, matched.hours, matched.x, matched.y, matched.focus, b.id);
+    }
+  }
+
+  const workshops = db
+    .prepare(`SELECT id, name, city, country, address FROM workshops`)
+    .all() as Array<{ id: number; name: string; city: string; country: string; address: string }>;
+  const updateWs = db.prepare(`UPDATE workshops SET address = ?, map_x = ?, map_y = ? WHERE id = ?`);
+  for (const w of workshops) {
+    if (!w.address) {
+      const lower = `${w.name} ${w.city}`.toLowerCase();
+      let x = 554;
+      let y = 274;
+      if (lower.includes('four lines')) {
+        x = 540;
+        y = 244;
+      } else if (lower.includes('jubail')) {
+        x = 542;
+        y = 214;
+      } else if (lower.includes('yanbu')) {
+        x = 230;
+        y = 326;
+      } else if (lower.includes('tabuk')) {
+        x = 248;
+        y = 150;
+      } else if (lower.includes('riyadh')) {
+        x = 472;
+        y = 328;
+      } else if (lower.includes('jeddah')) {
+        x = 276;
+        y = 418;
+      }
+      updateWs.run(`${w.city} Fleet Maintenance & Quick Service Center, ${w.country}`, x, y, w.id);
+    }
+  }
 }
 
 const TARGET_SEED_VERSION = 'real_db_v2';

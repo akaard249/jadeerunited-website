@@ -6,6 +6,7 @@ import type { Article } from '../types';
 import { VehicleImage } from '../components/BrandMark';
 import { Reveal } from '../components/MotionPrimitives';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 
 export function ArticleDetailPage() {
   const { slug } = useParams();
@@ -42,6 +43,30 @@ export function ArticleDetailPage() {
       active = false;
     };
   }, [slug]);
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  usePageSeo({
+    title: article ? `${article.title} | Jadeer United` : 'Articles & Fleet Insights | Jadeer United',
+    description: article
+      ? (article.excerpt || article.body).slice(0, 160)
+      : 'Fleet leasing news, Vision 2030 mobility updates, and safety briefings from Jadeer United.',
+    canonicalPath: article ? `/articles/${article.slug}` : '/articles',
+    ogType: 'article',
+    image: article?.image_url || '/assets/jadeer/hero-fleet.jpg',
+    jsonLd: article
+      ? {
+          '@context': 'https://schema.org',
+          '@type': 'Article',
+          headline: article.title,
+          description: article.excerpt || article.body.slice(0, 160),
+          author: { '@type': 'Organization', name: article.author || 'Jadeer United' },
+          publisher: { '@type': 'Organization', name: 'Jadeer United', url: origin },
+          datePublished: article.published_at,
+          image: article.image_url ? `${origin}${article.image_url}` : undefined,
+          mainEntityOfPage: `${origin}/articles/${article.slug}`,
+        }
+      : undefined,
+  });
 
   if (loading) {
     return (

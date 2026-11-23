@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Search, RotateCcw } from 'lucide-react';
 import { api } from '../lib/api';
 import type { ListingType, Vehicle } from '../types';
 import { VehicleCard } from '../components/VehicleCard';
 import { AmbientGoldBackdrop, StaggerGroup, StaggerItem } from '../components/MotionPrimitives';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 
 const CATEGORIES = ['All', 'SUV', 'Sedan', 'Hybrid', 'Pick-Up', 'Bus'];
 const BRANDS = ['All', 'Toyota', 'Nissan', 'Hyundai', 'Chevrolet', 'GMC', 'Mitsubishi', 'KIA'];
@@ -13,16 +14,38 @@ const COUNTRIES = ['All', 'Saudi Arabia', 'Bahrain', 'Oman'];
 const FUEL_TYPES = ['All', 'Hybrid', 'Petrol', 'Diesel'];
 const TRANSMISSIONS = ['All', 'Automatic', 'Manual'];
 
-export function CatalogPage({ listingType }: { listingType: ListingType }) {
+function slugToBrand(slug?: string): string {
+  if (!slug) return 'All';
+  const normalized = slug.toLowerCase().trim();
+  const matched = BRANDS.find((b) => b.toLowerCase().replace(/[^a-z0-9]+/g, '-') === normalized);
+  return matched || 'All';
+}
+
+function brandToSlug(brand: string): string {
+  return brand.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
+}
+
+export function CatalogPage({
+  listingType,
+  initialBrandSlug,
+}: {
+  listingType: ListingType;
+  initialBrandSlug?: string;
+}) {
   const { pick } = useLanguage();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isShowroom = listingType === 'showroom';
+  const sectionPath = isShowroom ? '/showroom' : '/used-cars';
+  const initialMake = slugToBrand(initialBrandSlug);
+
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [category, setCategory] = useState('All');
-  const [make, setMake] = useState('All');
+  const [make, setMake] = useState(initialMake);
   const [country, setCountry] = useState('All');
   const [fuelType, setFuelType] = useState('All');
   const [transmission, setTransmission] = useState('All');
@@ -31,14 +54,38 @@ export function CatalogPage({ listingType }: { listingType: ListingType }) {
 
   useEffect(() => {
     setCategory('All');
-    setMake('All');
+    setMake(slugToBrand(initialBrandSlug));
     setCountry('All');
     setFuelType('All');
     setTransmission('All');
     setYear('All');
     setMaxPrice('');
-    setSearch('');
-  }, [listingType]);
+    setSearch(searchParams.get('search') || '');
+  }, [listingType, initialBrandSlug, searchParams]);
+
+  const activeBrandLabel = make !== 'All' ? make : '';
+  const canonicalPath = activeBrandLabel
+    ? `${sectionPath}/${brandToSlug(activeBrandLabel)}`
+    : sectionPath;
+
+  usePageSeo({
+    title: isShowroom
+      ? activeBrandLabel
+        ? `${activeBrandLabel} Showroom Fleet — Operational Leasing | Jadeer United`
+        : 'Showroom Fleet — New Vehicles & Operational Leasing | Jadeer United'
+      : activeBrandLabel
+        ? `Certified Used ${activeBrandLabel} Cars — GCC Fleet | Jadeer United Motors`
+        : 'Certified Used Cars — Ex-Corporate GCC Fleet | Jadeer United Motors',
+    description: isShowroom
+      ? activeBrandLabel
+        ? `Explore ${activeBrandLabel} vehicles for corporate operational leasing across Bahrain, Saudi Arabia, and Oman with full trim specs, maintenance, and HSE readiness.`
+        : 'Browse 2025–2026 Toyota, Nissan, Hyundai, Chevrolet, and GMC vehicles for operational leasing across Saudi Arabia, Bahrain, and Oman.'
+      : activeBrandLabel
+        ? `Certified pre-owned ${activeBrandLabel} vehicles inspected across 120 checkpoints with verified mileage and complete service history from Jadeer United Motors.`
+        : 'Manufacturer-maintained ex-corporate used vehicles inspected across 120 checkpoints with verified odometer mileage and transparent SAR pricing.',
+    canonicalPath,
+    image: isShowroom ? '/assets/jadeer/hero-fleet.jpg' : '/assets/jadeer/used-prado.jpg',
+  });
 
   useEffect(() => {
     let active = true;
@@ -86,6 +133,18 @@ export function CatalogPage({ listingType }: { listingType: ListingType }) {
     setTransmission('All');
     setYear('All');
     setMaxPrice('');
+    if (initialBrandSlug) {
+      navigate(sectionPath);
+    }
+  };
+
+  const handleMakeChange = (nextMake: string) => {
+    setMake(nextMake);
+    if (nextMake === 'All') {
+      if (initialBrandSlug) navigate(sectionPath);
+    } else {
+      navigate(`${sectionPath}/${brandToSlug(nextMake)}`);
+    }
   };
 
   return (
@@ -102,9 +161,13 @@ export function CatalogPage({ listingType }: { listingType: ListingType }) {
                   : pick('JADEER UNITED MOTORS CERTIFIED PRE-OWNED', 'جدير المتحدة للسيارات — المستعملة المعتمدة')}
               </p>
               <h1 className="mt-2 font-display text-3xl lg:text-4xl font-bold tracking-tight text-white">
-                {isShowroom
-                  ? pick('Showroom Fleet', 'معرض السيارات الجديدة')
-                  : pick('Curated Used Cars', 'السيارات المستعملة المعتمدة')}
+                {activeBrandLabel
+                  ? isShowroom
+                    ? `${activeBrandLabel} ${pick('Showroom Fleet', 'معرض السيارات')}`
+                    : `${pick('Certified Used', 'سيارات مستعملة معتمدة')} ${activeBrandLabel}`
+                  : isShowroom
+                    ? pick('Showroom Fleet', 'معرض السيارات الجديدة')
+                    : pick('Curated Used Cars', 'السيارات المستعملة المعتمدة')}
               </h1>
               <p className="mt-3 text-sm text-[#B4B0A8] leading-relaxed">
                 {isShowroom
@@ -170,7 +233,7 @@ export function CatalogPage({ listingType }: { listingType: ListingType }) {
               </label>
               <select
                 value={make}
-                onChange={(e) => setMake(e.target.value)}
+                onChange={(e) => handleMakeChange(e.target.value)}
                 className="w-full px-3 py-2 text-sm bg-[#0C0C0F] border border-white/10 rounded-lg text-white focus:outline-none focus:border-[#C8A45D]"
               >
                 {BRANDS.map((b) => (
@@ -279,6 +342,25 @@ export function CatalogPage({ listingType }: { listingType: ListingType }) {
               </button>
             </div>
           </div>
+          {/* Crawlable Brand Index Links for Search & AI Discovery */}
+          <nav aria-label="Browse by brand" className="pt-2 border-t border-white/[0.06] flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
+            <span className="text-[#8F8B84] font-medium">{pick('Brands:', 'العلامات:')}</span>
+            {BRANDS.map((b) => {
+              const target = b === 'All' ? sectionPath : `${sectionPath}/${brandToSlug(b)}`;
+              const isSelected = make === b;
+              return (
+                <Link
+                  key={b}
+                  to={target}
+                  className={`transition-colors ${
+                    isSelected ? 'text-[#C8A45D] font-semibold' : 'text-[#B4B0A8] hover:text-white'
+                  }`}
+                >
+                  {b === 'All' ? pick('All', 'الكل') : b}
+                </Link>
+              );
+            })}
+          </nav>
         </div>
       </section>
 

@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { ArrowLeft, ArrowRight, Check, Gauge, Fuel, Cog, ShieldCheck, Palette } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Gauge, Fuel, Cog, ShieldCheck, Palette } from 'lucide-react';
 import { api } from '../lib/api';
 import type { ListingType, Vehicle } from '../types';
 import { VehicleImage } from '../components/BrandMark';
 import { VehicleCard } from '../components/VehicleCard';
 import { EASE_LUXURY, Reveal, StaggerGroup, StaggerItem } from '../components/MotionPrimitives';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 
-export function VehicleDetailPage({ listingType }: { listingType: ListingType }) {
-  const { id } = useParams();
+export function VehicleDetailPage({
+  listingType,
+  legacyId,
+}: {
+  listingType: ListingType;
+  legacyId?: number;
+}) {
+  const { brand, model, id } = useParams();
+  const navigate = useNavigate();
   const { pick } = useLanguage();
   const [vehicle, setVehicle] = useState<Vehicle | null>(null);
   const [related, setRelated] = useState<Vehicle[]>([]);
@@ -18,43 +26,162 @@ export function VehicleDetailPage({ listingType }: { listingType: ListingType })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const section: 'showroom' | 'used-cars' = listingType === 'showroom' ? 'showroom' : 'used-cars';
+
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
     setSelectedTrimIdx(0);
-    const numId = Number(id);
-    if (!Number.isInteger(numId) || numId <= 0) {
+
+    const resolvedLegacyId = legacyId ?? (id && /^\d+$/.test(id) ? Number(id) : null);
+
+    if (resolvedLegacyId && resolvedLegacyId > 0) {
+      api
+        .getVehicle(resolvedLegacyId)
+        .then((res) => {
+          if (!active) return;
+          if (res.vehicle.canonical_path) {
+            navigate(res.vehicle.canonical_path, { replace: true });
+            return;
+          }
+          setVehicle(res.vehicle);
+          setRelated(res.related);
+        })
+        .catch((err) => {
+          if (!active) return;
+          setError(err instanceof Error ? err.message : 'Vehicle not found.');
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    } else if (brand && model) {
+      api
+        .getVehicleBySlug(section, brand, model)
+        .then((res) => {
+          if (!active) return;
+          setVehicle(res.vehicle);
+          setRelated(res.related);
+        })
+        .catch((err) => {
+          if (!active) return;
+          setError(err instanceof Error ? err.message : 'Vehicle not found.');
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    } else {
       setError('Invalid vehicle reference.');
       setLoading(false);
-      return;
     }
-
-    api
-      .getVehicle(numId)
-      .then((res) => {
-        if (!active) return;
-        setVehicle(res.vehicle);
-        setRelated(res.related);
-      })
-      .catch((err) => {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : 'Vehicle not found.');
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
 
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [section, brand, model, id, legacyId, navigate]);
 
   const backPath = listingType === 'showroom' ? '/showroom' : '/used-cars';
   const backLabel =
     listingType === 'showroom'
       ? pick('Back to Showroom', 'العودة إلى المعرض')
       : pick('Back to Used Cars', 'العودة إلى السيارات المستعملة');
+
+  const sectionLabel =
+    listingType === 'showroom'
+      ? pick('Showroom', 'المعرض')
+      : pick('Used Cars', 'السيارات المستعملة');
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const canonicalPath = vehicle?.canonical_path || (brand && model ? `/${section}/${brand}/${model}` : backPath);
+  const minTrimPrice =
+    vehicle && vehicle.trims && vehicle.trims.length > 0
+      ? Math.min(...vehicle.trims.map((t) => t.price))
+      : vehicle?.price_or_monthly_rate || 0;
+  const maxTrimPrice =
+    vehicle && vehicle.trims && vehicle.trims.length > 0
+      ? Math.max(...vehicle.trims.map((t) => t.price))
+      : vehicle?.price_or_monthly_rate || 0;
+
+  usePageSeo({
+    title: vehicle
+      ? `${vehicle.year} ${vehicle.make} ${vehicle.model} — ${vehicle.listing_type === 'showroom' ? 'Showroom Operational Leasing' : 'Certified Used Car'} | Jadeer United`
+      : `${sectionLabel} | Jadeer United`,
+    description: vehicle
+      ? `${vehicle.year} ${vehicle.make} ${vehicle.model} (${vehicle.category}, ${vehicle.fuel_type}, ${vehicle.transmission}) from ${vehicle.currency} ${vehicle.price_or_monthly_rate.toLocaleString()}. ${vehicle.description}`.slice(0, 160)
+      : 'Explore vehicle specifications, trim options, and operational leasing quotes from Jadeer United across Bahrain, Saudi Arabia, and Oman.',
+    canonicalPath,
+    ogType: 'product',
+    image: vehicle?.image_url || '/assets/jadeer/hero-fleet.jpg',
+    jsonLd: vehicle
+      ? [
+          {
+            '@context': 'https://schema.org',
+            '@type': ['Car', 'Product'],
+            name: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
+            brand: { '@type': 'Brand', name: vehicle.make },
+            model: vehicle.model,
+            vehicleModelDate: String(vehicle.year),
+            bodyType: vehicle.category,
+            fuelType: vehicle.fuel_type,
+            vehicleTransmission: vehicle.transmission,
+            itemCondition:
+              vehicle.listing_type === 'showroom'
+                ? 'https://schema.org/NewCondition'
+                : 'https://schema.org/UsedCondition',
+            description: vehicle.description,
+            image: vehicle.image_url ? `${origin}${vehicle.image_url}` : undefined,
+            url: `${origin}${canonicalPath}`,
+            offers:
+              vehicle.trims && vehicle.trims.length > 1
+                ? {
+                    '@type': 'AggregateOffer',
+                    priceCurrency: vehicle.currency,
+                    lowPrice: minTrimPrice,
+                    highPrice: maxTrimPrice,
+                    offerCount: vehicle.trims.length,
+                    availability:
+                      vehicle.status === 'available'
+                        ? 'https://schema.org/InStock'
+                        : 'https://schema.org/LimitedAvailability',
+                  }
+                : {
+                    '@type': 'Offer',
+                    priceCurrency: vehicle.currency,
+                    price: vehicle.price_or_monthly_rate,
+                    availability:
+                      vehicle.status === 'available'
+                        ? 'https://schema.org/InStock'
+                        : 'https://schema.org/LimitedAvailability',
+                  },
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              { '@type': 'ListItem', position: 1, name: 'Home', item: `${origin}/` },
+              {
+                '@type': 'ListItem',
+                position: 2,
+                name: vehicle.listing_type === 'showroom' ? 'Showroom' : 'Used Cars',
+                item: `${origin}${backPath}`,
+              },
+              {
+                '@type': 'ListItem',
+                position: 3,
+                name: vehicle.make,
+                item: `${origin}${backPath}/${vehicle.brand_slug}`,
+              },
+              {
+                '@type': 'ListItem',
+                position: 4,
+                name: `${vehicle.year} ${vehicle.make} ${vehicle.model}`,
+                item: `${origin}${canonicalPath}`,
+              },
+            ],
+          },
+        ]
+      : undefined,
+  });
 
   if (loading) {
     return (
@@ -106,13 +233,33 @@ export function VehicleDetailPage({ listingType }: { listingType: ListingType })
   return (
     <div className="bg-[#0B0B0D] text-[#E4E0D8]">
       <div className="max-w-[1280px] mx-auto px-6 lg:px-8 py-10 lg:py-14">
-        <Link
-          to={backPath}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-[#B4B0A8] hover:text-[#C8A45D] transition-colors mb-8"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>{backLabel}</span>
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+          <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-xs text-[#949088]">
+            <Link to="/" className="hover:text-[#C8A45D] transition-colors">
+              {pick('Home', 'الرئيسية')}
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5 text-white/25" />
+            <Link to={backPath} className="hover:text-[#C8A45D] transition-colors">
+              {sectionLabel}
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5 text-white/25" />
+            <Link to={`${backPath}/${vehicle.brand_slug}`} className="hover:text-[#C8A45D] transition-colors">
+              {vehicle.make}
+            </Link>
+            <ChevronRight className="h-3.5 w-3.5 text-white/25" />
+            <span className="text-[#E4E0D8] font-medium">
+              {vehicle.make} {vehicle.model}
+            </span>
+          </nav>
+
+          <Link
+            to={backPath}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#B4B0A8] hover:text-[#C8A45D] transition-colors"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>{backLabel}</span>
+          </Link>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
           <div className="lg:col-span-7 space-y-8">

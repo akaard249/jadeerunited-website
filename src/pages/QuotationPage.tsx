@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { BRAND } from '../data/brand';
 import type { Offer, QuotationAddOns, QuotationRequestRecord, Vehicle } from '../types';
 import { AmbientGoldBackdrop, Reveal } from '../components/MotionPrimitives';
+import { usePageSeo } from '../hooks/usePageSeo';
 
 const ADD_ON_OPTIONS: Array<{ key: keyof QuotationAddOns; label: string; detail: string }> = [
   {
@@ -41,6 +42,14 @@ const ADD_ON_OPTIONS: Array<{ key: keyof QuotationAddOns; label: string; detail:
 ];
 
 export function QuotationPage() {
+  usePageSeo({
+    title: 'Request a Corporate Fleet or Leasing Quotation | Jadeer United',
+    description:
+      'Request an operational leasing, corporate fleet, hybrid vehicle, or certified used car quotation across Bahrain, Saudi Arabia, and Oman.',
+    canonicalPath: '/quotation',
+    image: '/assets/jadeer/hero-fleet.jpg',
+  });
+
   const [searchParams] = useSearchParams();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);

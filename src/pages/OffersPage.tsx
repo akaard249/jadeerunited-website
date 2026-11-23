@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import type { Offer } from '../types';
 import { VehicleImage } from '../components/BrandMark';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 import {
   AmbientGoldBackdrop,
   GoldGlowCard,
@@ -15,6 +16,14 @@ import {
 
 export function OffersPage() {
   const { pick } = useLanguage();
+
+  usePageSeo({
+    title: 'Corporate Fleet & Leasing Offers — Bahrain, KSA & Oman | Jadeer United',
+    description:
+      'Structured operational leasing packages, Vision 2030 hybrid fleet deals, EPC project mobilization rates, and certified used car offers from Jadeer United.',
+    canonicalPath: '/offers',
+    image: '/assets/jadeer/hero-fleet.jpg',
+  });
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -12,11 +12,22 @@ const STATUS_LABEL: Record<Vehicle['status'], { en: string; ar: string }> = {
   sold: { en: 'Sold', ar: 'تم البيع' },
 };
 
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function VehicleCard({ vehicle }: { vehicle: Vehicle }) {
   const { pick } = useLanguage();
-  const detailPath =
-    vehicle.listing_type === 'showroom' ? `/showroom/${vehicle.id}` : `/used-cars/${vehicle.id}`;
   const isShowroom = vehicle.listing_type === 'showroom';
+  const section = isShowroom ? 'showroom' : 'used-cars';
+  const detailPath =
+    vehicle.canonical_path ||
+    `/${section}/${vehicle.brand_slug || slugify(vehicle.make)}/${vehicle.model_slug || slugify(vehicle.model)}`;
   const objectPosition = vehicle.image_url.includes('land-cruiser-gr')
     ? 'object-bottom'
     : 'object-center';

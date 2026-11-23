@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Menu, X, Download, Lock, MapPin, Phone, Mail, Clock, Globe } from 'lucide-react';
+import { Menu, X, Download, MapPin, Phone, Mail, Clock, Globe } from 'lucide-react';
 import { BRAND } from '../data/brand';
+import { api } from '../lib/api';
+import type { SiteContent } from '../types';
 import { JadeerLogoMark } from './BrandMark';
 import { EASE_LUXURY } from './MotionPrimitives';
 import { useLanguage } from '../context/LanguageContext';
@@ -17,8 +19,30 @@ const HEADER_NAV = [
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [siteContent, setSiteContent] = useState<Partial<SiteContent>>({});
   const { pathname } = useLocation();
   const { lang, toggleLang, pick } = useLanguage();
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getSiteContent()
+      .then((res) => {
+        if (active) setSiteContent(res.content || {});
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const bahrainPhone = siteContent.contact_bahrain_phone || '+973 6666 6064';
+  const ksaPhone = siteContent.contact_ksa_phone || '+966 56 887 7769';
+  const omanPhone = siteContent.contact_oman_phone || '+968 7745 9000';
+  const salesEmail = siteContent.contact_sales_email || 'sales@jadeergulf.com';
+  const hoursShort = siteContent.contact_hours_short_en || 'Sun–Thu 8:30–5:30 · Sat 9–1';
+  const hqShort = siteContent.contact_hq_summary_en || 'Amwaj, Bahrain · Khobar · Muscat';
+  const footerQuote = siteContent.hero_quote_en || BRAND.secondaryTagline;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0B0B0D] text-[#E4E0D8]">
@@ -106,7 +130,6 @@ export function PublicLayout({ children }: { children: ReactNode }) {
                     { labelEn: 'Home', labelAr: 'الرئيسية', to: '/' },
                     ...HEADER_NAV,
                     { labelEn: 'Articles & Insights', labelAr: 'المقالات والأخبار', to: '/articles' },
-                    { labelEn: 'Admin Panel', labelAr: 'لوحة الإدارة', to: '/admin' },
                   ].map((item) => (
                     <Link
                       key={item.to}
@@ -161,7 +184,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
                 leasing, direct vehicle sales, Vision 2030 hybrid fleets, and executive mobility.
               </p>
               <p className="text-xs text-[#C8A45D] italic">
-                &ldquo;{BRAND.secondaryTagline}&rdquo;
+                &ldquo;{footerQuote}&rdquo;
               </p>
               <div className="pt-1">
                 <a
@@ -222,15 +245,18 @@ export function PublicLayout({ children }: { children: ReactNode }) {
               <MapPin className="h-4 w-4 text-[#C8A45D] shrink-0 mt-0.5" />
               <div>
                 <div className="text-[#8F8B84]">HEADQUARTERS</div>
-                <div className="text-[#E5E5E7] mt-0.5">Amwaj, Bahrain · Khobar · Muscat</div>
+                <div className="text-[#E5E5E7] mt-0.5">{hqShort}</div>
               </div>
             </div>
             <div className="flex items-start gap-2.5">
               <Phone className="h-4 w-4 text-[#C8A45D] shrink-0 mt-0.5" />
               <div>
                 <div className="text-[#8F8B84]">BAHRAIN HQ</div>
-                <a href="tel:+97366666064" className="font-mono tabular-nums text-[#E5E5E7] hover:text-[#C8A45D] mt-0.5 block">
-                  +973 6666 6064
+                <a
+                  href={`tel:${bahrainPhone.replace(/\s+/g, '')}`}
+                  className="font-mono tabular-nums text-[#E5E5E7] hover:text-[#C8A45D] mt-0.5 block"
+                >
+                  {bahrainPhone}
                 </a>
               </div>
             </div>
@@ -239,7 +265,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
               <div>
                 <div className="text-[#8F8B84]">KSA &amp; OMAN</div>
                 <div className="font-mono tabular-nums text-[#E5E5E7] mt-0.5">
-                  +966 56 887 7769 · +968 7745 9000
+                  {ksaPhone} · {omanPhone}
                 </div>
               </div>
             </div>
@@ -247,8 +273,11 @@ export function PublicLayout({ children }: { children: ReactNode }) {
               <Mail className="h-4 w-4 text-[#C8A45D] shrink-0 mt-0.5" />
               <div>
                 <div className="text-[#8F8B84]">SALES &amp; INFO</div>
-                <a href="mailto:sales@jadeergulf.com" className="text-[#E5E5E7] hover:text-[#C8A45D] mt-0.5 block">
-                  sales@jadeergulf.com
+                <a
+                  href={`mailto:${salesEmail}`}
+                  className="text-[#E5E5E7] hover:text-[#C8A45D] mt-0.5 block"
+                >
+                  {salesEmail}
                 </a>
               </div>
             </div>
@@ -256,7 +285,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
               <Clock className="h-4 w-4 text-[#C8A45D] shrink-0 mt-0.5" />
               <div>
                 <div className="text-[#8F8B84]">HOURS</div>
-                <div className="text-[#E5E5E7] mt-0.5">Sun–Thu 8:30–5:30 · Sat 9–1</div>
+                <div className="text-[#E5E5E7] mt-0.5">{hoursShort}</div>
               </div>
             </div>
           </div>
@@ -267,13 +296,6 @@ export function PublicLayout({ children }: { children: ReactNode }) {
             </div>
             <div className="flex items-center gap-6">
               <span>Bahrain, Saudi Arabia &amp; Oman Vision 2030</span>
-              <Link
-                to="/admin"
-                className="inline-flex items-center gap-1.5 text-[#B4B0A8] hover:text-[#C8A45D] transition-colors whitespace-nowrap shrink-0"
-              >
-                <Lock className="h-3 w-3" />
-                <span>Admin Panel</span>
-              </Link>
             </div>
           </div>
         </div>

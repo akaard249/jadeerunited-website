@@ -24,6 +24,9 @@ export interface Vehicle {
   id: number;
   make: string;
   model: string;
+  brand_slug: string;
+  model_slug: string;
+  canonical_path: string;
   year: number;
   category: string;
   sub_type: string;
@@ -112,6 +115,11 @@ export interface BranchRecord {
   city: string;
   phone: string;
   is_hq: boolean;
+  address: string;
+  hours: string;
+  map_x: number;
+  map_y: number;
+  focus: string;
 }
 
 export interface WorkshopRecord {
@@ -123,11 +131,39 @@ export interface WorkshopRecord {
   country: string;
   phone: string;
   hours: string;
+  address: string;
+  map_x: number;
+  map_y: number;
+}
+
+export interface AboutGalleryItem {
+  id: number;
+  title: string;
+  title_ar: string;
+  caption: string;
+  caption_ar: string;
+  image_url: string;
+  sort_order: number;
+  created_at?: string;
 }
 
 export interface SiteContent {
+  hero_image_url: string;
   hero_tagline_en: string;
   hero_tagline_ar: string;
+  hero_headline_en: string;
+  hero_headline_highlight_en: string;
+  hero_headline_suffix_en: string;
+  hero_headline_ar: string;
+  hero_headline_highlight_ar: string;
+  hero_headline_suffix_ar: string;
+  hero_subtitle_en: string;
+  hero_subtitle_ar: string;
+  hero_quote_en: string;
+  hero_card_eyebrow_en: string;
+  hero_card_eyebrow_ar: string;
+  hero_card_caption_en: string;
+  hero_card_caption_ar: string;
   about_headline_en: string;
   about_headline_ar: string;
   about_p1_en: string;
@@ -140,6 +176,28 @@ export interface SiteContent {
   vision_ar: string;
   mission_en: string;
   mission_ar: string;
+  about_hq_image_url: string;
+  about_vision_image_url: string;
+  about_strategic_title_en: string;
+  about_strategic_title_ar: string;
+  about_strategic_p1_en: string;
+  about_strategic_p2_en: string;
+  contact_sales_email: string;
+  contact_support_email: string;
+  contact_general_email: string;
+  contact_bahrain_phone: string;
+  contact_ksa_phone: string;
+  contact_oman_phone: string;
+  contact_ops_phone: string;
+  contact_workshop_phone: string;
+  contact_hours_en: string;
+  contact_hours_short_en: string;
+  contact_hq_summary_en: string;
+  contact_sales_lead: string;
+  contact_ops_lead: string;
+  contact_workshop_lead: string;
+  contact_hero_title_en: string;
+  contact_hero_subtitle_en: string;
 }
 
 export interface QuotationAddOns {
@@ -193,10 +251,16 @@ export interface ContactMessageRecord {
   created_at: string;
 }
 
+export type AdminPrivilege = 'vehicles' | 'quotations' | 'website' | 'admins';
+
 export interface AdminUser {
   id: number;
   email: string;
   name: string;
+  role: 'super_admin' | 'staff';
+  privileges: AdminPrivilege[];
+  is_active?: boolean;
+  created_at?: string;
 }
 
 export interface AdminDashboardStats {

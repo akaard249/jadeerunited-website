@@ -4,10 +4,11 @@ import { motion } from 'motion/react';
 import { ArrowRight, ArrowUpRight, Phone, Star, Quote } from 'lucide-react';
 import { api } from '../lib/api';
 import { BRAND } from '../data/brand';
-import type { Article, ClientReview, Offer, SiteContent, Vehicle } from '../types';
+import type { Article, BranchRecord, ClientReview, Offer, SiteContent, Vehicle } from '../types';
 import { VehicleCard } from '../components/VehicleCard';
 import { VehicleImage } from '../components/BrandMark';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 import {
   AmbientGoldBackdrop,
   AnimatedCounter,
@@ -20,13 +21,23 @@ import {
 
 export function HomePage() {
   const { pick } = useLanguage();
+
   const [showroomFeatured, setShowroomFeatured] = useState<Vehicle[]>([]);
   const [usedFeatured, setUsedFeatured] = useState<Vehicle[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [articles, setArticles] = useState<Article[]>([]);
   const [reviews, setReviews] = useState<ClientReview[]>([]);
+  const [branches, setBranches] = useState<BranchRecord[]>([]);
   const [siteContent, setSiteContent] = useState<Partial<SiteContent>>({});
   const [loading, setLoading] = useState(true);
+
+  usePageSeo({
+    title: 'Jadeer United — Corporate Fleet Leasing & Showroom GCC',
+    description:
+      'Corporate operational leasing, Vision 2030 hybrid fleets, showroom vehicles & certified used cars across Bahrain, Saudi Arabia & Oman since 2009.',
+    canonicalPath: '/',
+    image: siteContent.hero_image_url || '/assets/jadeer/hero-fleet.jpg',
+  });
 
   useEffect(() => {
     let active = true;
@@ -39,6 +50,7 @@ export function HomePage() {
         setOffers(data.offers);
         setArticles(data.articles);
         setReviews(data.reviews || []);
+        setBranches(data.branches || []);
         setSiteContent(data.siteContent || {});
       })
       .catch(() => {})
@@ -53,6 +65,36 @@ export function HomePage() {
   const heroSub = pick(
     siteContent.hero_tagline_en || 'Drive Your Business Forward',
     siteContent.hero_tagline_ar || 'انطلق بأعمالك نحو المستقبل'
+  );
+  const heroHeadlinePrefix = pick(
+    siteContent.hero_headline_en ?? 'Transportation solutions that drive ',
+    siteContent.hero_headline_ar ?? 'حلول نقل مبتكرة تقود '
+  );
+  const heroHeadlineHighlight = pick(
+    siteContent.hero_headline_highlight_en ?? 'business success',
+    siteContent.hero_headline_highlight_ar ?? 'نجاح أعمالك'
+  );
+  const heroHeadlineSuffix = pick(
+    siteContent.hero_headline_suffix_en ?? ' and sustainability.',
+    siteContent.hero_headline_suffix_ar ?? ' واستدامتها.'
+  );
+  const heroDescription = pick(
+    siteContent.hero_subtitle_en ||
+      'Jadeer United delivers corporate operational leasing, Vision 2030 hybrid fleets, short- and long-term rentals, and certified vehicle sales — operating 3,000+ vehicles across Bahrain, Saudi Arabia, and Oman.',
+    siteContent.hero_subtitle_ar ||
+      'تقدم جدير المتحدة التأجير التشغيلي للشركات، وأساطيل المركبات الهجينة المتوافقة مع رؤية 2030، وتأجير وبيع السيارات الجديدة والمستعملة المعتمدة بأسطول يتجاوز 3,000 مركبة في البحرين والسعودية وعُمان.'
+  );
+  const heroQuote = siteContent.hero_quote_en || BRAND.secondaryTagline;
+  const heroImageUrl = siteContent.hero_image_url || '/assets/jadeer/land-cruiser-studio.jpg';
+  const heroCardEyebrow = pick(
+    siteContent.hero_card_eyebrow_en || 'Corporate Operational Leasing & Site-Ready Fleets',
+    siteContent.hero_card_eyebrow_ar || 'التأجير التشغيلي للشركات والأساطيل المجهزة للمشاريع'
+  );
+  const heroCardCaption = pick(
+    siteContent.hero_card_caption_en ||
+      'Comprehensive GCC Insurance · GPS & Blue Key Control · USA-Standard Roll Cages',
+    siteContent.hero_card_caption_ar ||
+      'تأمين شامل لدول الخليج · تتبع GPS ومفتاح أزرق · أقفاص حماية بمعايير أمريكية'
   );
 
   return (
@@ -83,14 +125,11 @@ export function HomePage() {
                   className="mt-4 font-display font-bold tracking-tight text-white leading-[1.08] text-balance"
                   style={{ fontSize: 'clamp(2.25rem, 3.9vw, 3.5rem)' }}
                 >
-                  {pick(
-                    'Transportation solutions that drive ',
-                    'حلول نقل مبتكرة تقود '
+                  {heroHeadlinePrefix}
+                  {heroHeadlineHighlight && (
+                    <span className="text-[#C8A45D]">{heroHeadlineHighlight}</span>
                   )}
-                  <span className="text-[#C8A45D]">
-                    {pick('business success', 'نجاح أعمالك')}
-                  </span>
-                  {pick(' and sustainability.', ' واستدامتها.')}
+                  {heroHeadlineSuffix}
                 </motion.h1>
                 <motion.p
                   initial={{ opacity: 0, y: 16 }}
@@ -98,10 +137,7 @@ export function HomePage() {
                   transition={{ duration: 0.55, delay: 0.16, ease: EASE_LUXURY }}
                   className="mt-5 text-base text-[#B4B0A8] leading-relaxed max-w-xl"
                 >
-                  {pick(
-                    'Jadeer United delivers corporate operational leasing, Vision 2030 hybrid fleets, short- and long-term rentals, and certified vehicle sales — operating 3,000+ vehicles across Bahrain, Saudi Arabia, and Oman.',
-                    'تقدم جدير المتحدة التأجير التشغيلي للشركات، وأساطيل المركبات الهجينة المتوافقة مع رؤية 2030، وتأجير وبيع السيارات الجديدة والمستعملة المعتمدة بأسطول يتجاوز 3,000 مركبة في البحرين والسعودية وعُمان.'
-                  )}
+                  {heroDescription}
                 </motion.p>
 
                 <motion.div
@@ -143,7 +179,7 @@ export function HomePage() {
                 className="mt-10 pt-6 border-t border-white/[0.08]"
               >
                 <p className="text-sm text-[#B4B0A8] italic">
-                  &ldquo;{BRAND.secondaryTagline}&rdquo;
+                  &ldquo;{heroQuote}&rdquo;
                 </p>
               </motion.div>
             </div>
@@ -155,23 +191,13 @@ export function HomePage() {
               className="lg:col-span-6 relative rounded-xl overflow-hidden bg-[#141418] border border-white/[0.1] min-h-[340px] lg:min-h-[470px] group"
             >
               <VehicleImage
-                src="/assets/jadeer/land-cruiser-studio.jpg"
-                alt="2026 Toyota Land Cruiser VX-R flagship corporate SUV in Jadeer United showroom"
+                src={heroImageUrl}
+                alt="Jadeer United flagship corporate fleet showcase"
                 className="w-full h-full lg:h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
               />
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0B0B0D]/95 via-[#0B0B0D]/60 to-transparent p-6 text-white">
-                <div className="text-xs font-medium text-[#C8A45D]">
-                  {pick(
-                    'Corporate Operational Leasing & Site-Ready Fleets',
-                    'التأجير التشغيلي للشركات والأساطيل المجهزة للمشاريع'
-                  )}
-                </div>
-                <div className="mt-1 font-display text-base font-semibold">
-                  {pick(
-                    'Comprehensive GCC Insurance · GPS & Blue Key Control · USA-Standard Roll Cages',
-                    'تأمين شامل لدول الخليج · تتبع GPS ومفتاح أزرق · أقفاص حماية بمعايير أمريكية'
-                  )}
-                </div>
+                <div className="text-xs font-medium text-[#C8A45D]">{heroCardEyebrow}</div>
+                <div className="mt-1 font-display text-base font-semibold">{heroCardCaption}</div>
               </div>
             </motion.div>
           </div>
@@ -574,8 +600,27 @@ export function HomePage() {
             </Reveal>
 
             <StaggerGroup className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-5">
-              {BRAND.offices.map((office) => (
-                <StaggerItem key={office.country}>
+              {(branches.length > 0
+                ? branches.slice(0, 3).map((b) => ({
+                    key: String(b.id),
+                    role: b.is_hq ? pick('Headquarters', 'المقر الرئيسي') : pick('Regional Branch', 'فرع إقليمي'),
+                    country: b.country,
+                    city: b.city,
+                    focus: b.focus || b.address || b.name,
+                    phone: b.phone,
+                    telHref: `tel:${b.phone.replace(/\s+/g, '')}`,
+                  }))
+                : BRAND.offices.map((o) => ({
+                    key: o.country,
+                    role: o.role,
+                    country: o.country,
+                    city: o.city,
+                    focus: o.focus,
+                    phone: o.phone,
+                    telHref: o.telHref,
+                  }))
+              ).map((office) => (
+                <StaggerItem key={office.key}>
                   <GoldGlowCard className="p-5 flex flex-col justify-between h-full">
                     <div>
                       <div className="text-xs text-[#C8A45D] font-medium">{office.role}</div>

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, useParams, Navigate } from 'react-router-dom';
 import { LanguageProvider } from './context/LanguageContext';
 import { PublicLayout } from './components/PublicLayout';
 import { HomePage } from './pages/HomePage';
@@ -12,6 +12,7 @@ import { ArticleDetailPage } from './pages/ArticleDetailPage';
 import { QuotationPage } from './pages/QuotationPage';
 import { ContactPage } from './pages/ContactPage';
 import { AdminPage } from './pages/AdminPage';
+import type { ListingType } from './types';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -21,13 +22,21 @@ function ScrollToTop() {
   return null;
 }
 
+function SectionSingleSegmentRoute({ listingType }: { listingType: ListingType }) {
+  const { idOrBrand } = useParams();
+  if (idOrBrand && /^\d+$/.test(idOrBrand)) {
+    return <VehicleDetailPage listingType={listingType} legacyId={Number(idOrBrand)} />;
+  }
+  return <CatalogPage listingType={listingType} initialBrandSlug={idOrBrand} />;
+}
+
 export default function App() {
   return (
     <LanguageProvider>
       <BrowserRouter>
         <ScrollToTop />
         <Routes>
-        {/* Role-Protected Admin Panel */}
+        {/* Role-Protected Admin Panel (direct URL only — not linked publicly) */}
         <Route path="/admin/*" element={<AdminPage />} />
 
         {/* Public Jadeer United Website */}
@@ -56,10 +65,18 @@ export default function App() {
           }
         />
         <Route
-          path="/showroom/:id"
+          path="/showroom/:brand/:model"
           element={
             <PublicLayout>
               <VehicleDetailPage listingType="showroom" />
+            </PublicLayout>
+          }
+        />
+        <Route
+          path="/showroom/:idOrBrand"
+          element={
+            <PublicLayout>
+              <SectionSingleSegmentRoute listingType="showroom" />
             </PublicLayout>
           }
         />
@@ -72,10 +89,18 @@ export default function App() {
           }
         />
         <Route
-          path="/used-cars/:id"
+          path="/used-cars/:brand/:model"
           element={
             <PublicLayout>
               <VehicleDetailPage listingType="used" />
+            </PublicLayout>
+          }
+        />
+        <Route
+          path="/used-cars/:idOrBrand"
+          element={
+            <PublicLayout>
+              <SectionSingleSegmentRoute listingType="used" />
             </PublicLayout>
           }
         />

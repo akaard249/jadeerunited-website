@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import {
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { BRAND } from '../data/brand';
+import type { BranchRecord, SiteContent, WorkshopRecord } from '../types';
 import {
   AmbientGoldBackdrop,
   AnimatedCounter,
@@ -27,39 +28,7 @@ import {
   StaggerItem,
 } from '../components/MotionPrimitives';
 import { LocationsMap } from '../components/LocationsMap';
-
-const DEPARTMENTS = [
-  {
-    key: 'sales',
-    department: 'Sales',
-    icon: Briefcase,
-    phone: '+966 56 887 7769',
-    whatsapp: '+973 6666 6064',
-    email: BRAND.emails.sales,
-    lead: 'Hatem Sabry · GCC Sales Desk',
-    hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
-  },
-  {
-    key: 'operations',
-    department: 'Operations',
-    icon: Settings,
-    phone: '+966 54 316 8080',
-    whatsapp: '+968 7745 9000',
-    email: BRAND.emails.general,
-    lead: 'Tamer Ismaeil · Fleet Operations',
-    hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
-  },
-  {
-    key: 'workshop',
-    department: 'Workshop — HQ',
-    icon: Wrench,
-    phone: '+966 54 307 4915',
-    whatsapp: '+973 6666 6064',
-    email: BRAND.emails.customerSupport,
-    lead: 'Maisara · Support & 24/7 Mobile Crew',
-    hours: 'Sun–Thu 8:30–5:30 · Sat 9:00–1:00',
-  },
-];
+import { usePageSeo } from '../hooks/usePageSeo';
 
 const TOPICS = [
   'Operational Leasing & Corporate Fleet',
@@ -71,6 +40,18 @@ const TOPICS = [
 ];
 
 export function ContactPage() {
+  usePageSeo({
+    title: 'Contact Jadeer United — Bahrain HQ, Saudi Arabia & Oman Branches',
+    description:
+      'Contact Jadeer United across Bahrain (Amwaj +973 6666 6064), Saudi Arabia (Khobar +966 56 887 7769), and Oman (Muscat +968 7745 9000) for fleet leasing, sales, and 24/7 mobile support.',
+    canonicalPath: '/contact',
+    image: '/assets/jadeer/jadeer-hq.jpg',
+  });
+
+  const [siteContent, setSiteContent] = useState<Partial<SiteContent>>({});
+  const [branches, setBranches] = useState<BranchRecord[]>([]);
+  const [workshops, setWorkshops] = useState<WorkshopRecord[]>([]);
+
   const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState('');
@@ -82,6 +63,70 @@ export function ContactPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    api
+      .getSiteContent()
+      .then((res) => {
+        if (!active) return;
+        setSiteContent(res.content || {});
+        setBranches(res.branches || []);
+        setWorkshops(res.workshops || []);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const salesEmail = siteContent.contact_sales_email || BRAND.emails.sales;
+  const supportEmail = siteContent.contact_support_email || BRAND.emails.customerSupport;
+  const generalEmail = siteContent.contact_general_email || BRAND.emails.general;
+  const bahrainPhone = siteContent.contact_bahrain_phone || '+973 6666 6064';
+  const ksaPhone = siteContent.contact_ksa_phone || '+966 56 887 7769';
+  const omanPhone = siteContent.contact_oman_phone || '+968 7745 9000';
+  const opsPhone = siteContent.contact_ops_phone || '+966 54 316 8080';
+  const workshopPhone = siteContent.contact_workshop_phone || '+966 54 307 4915';
+  const hoursFull =
+    siteContent.contact_hours_en ||
+    'Sun–Thu · 8:30 AM – 5:30 PM | Fri: Closed | Sat · 9:00 AM – 1:00 PM';
+  const hoursShort = siteContent.contact_hours_short_en || 'Sun–Thu 8:30–5:30 · Sat 9–1';
+  const hqSummary =
+    siteContent.contact_hq_summary_en || 'Amwaj, Bahrain · King Faisal Road, Khobar · Muscat, Oman';
+
+  const departments = [
+    {
+      key: 'sales',
+      department: 'Sales',
+      icon: Briefcase,
+      phone: ksaPhone,
+      whatsapp: bahrainPhone,
+      email: salesEmail,
+      lead: siteContent.contact_sales_lead || 'Hatem Sabry · GCC Sales Desk',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+    },
+    {
+      key: 'operations',
+      department: 'Operations',
+      icon: Settings,
+      phone: opsPhone,
+      whatsapp: omanPhone,
+      email: generalEmail,
+      lead: siteContent.contact_ops_lead || 'Tamer Ismaeil · Fleet Operations',
+      hours: 'Sun–Thu · 8:30 AM – 5:30 PM',
+    },
+    {
+      key: 'workshop',
+      department: 'Workshop — HQ',
+      icon: Wrench,
+      phone: workshopPhone,
+      whatsapp: bahrainPhone,
+      email: supportEmail,
+      lead: siteContent.contact_workshop_lead || 'Maisara · Support & 24/7 Mobile Crew',
+      hours: hoursShort,
+    },
+  ];
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -140,8 +185,14 @@ export function ContactPage() {
               className="mt-4 font-display font-bold tracking-tight text-white leading-[1.08] text-balance"
               style={{ fontSize: 'clamp(2.4rem, 5vw, 3.85rem)' }}
             >
-              Every question{' '}
-              <span className="block text-[#C8A45D]">deserves an answer.</span>
+              {siteContent.contact_hero_title_en ? (
+                <span>{siteContent.contact_hero_title_en}</span>
+              ) : (
+                <>
+                  Every question{' '}
+                  <span className="block text-[#C8A45D]">deserves an answer.</span>
+                </>
+              )}
             </motion.h1>
             <motion.p
               initial={{ opacity: 0, y: 16 }}
@@ -149,14 +200,14 @@ export function ContactPage() {
               transition={{ duration: 0.55, delay: 0.16, ease: EASE_LUXURY }}
               className="mt-5 text-sm sm:text-base text-[#B4B0A8] leading-relaxed"
             >
-              Reach the right team directly across Bahrain, Saudi Arabia, and Oman. Available Sunday
-              through Thursday, 8:30 AM – 5:30 PM &amp; Saturday 9:00 AM – 1:00 PM.
+              {siteContent.contact_hero_subtitle_en ||
+                'Reach the right team directly across Bahrain, Saudi Arabia, and Oman. Available Sunday through Thursday, 8:30 AM – 5:30 PM & Saturday 9:00 AM – 1:00 PM.'}
             </motion.p>
           </div>
 
           {/* 3 Department Cards */}
           <StaggerGroup className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-6">
-            {DEPARTMENTS.map((dept) => {
+            {departments.map((dept) => {
               const Icon = dept.icon;
               return (
                 <StaggerItem key={dept.key}>
@@ -223,7 +274,7 @@ export function ContactPage() {
       <section className="py-16 lg:py-20 bg-[#0E0E11] border-b border-white/[0.08]">
         <div className="max-w-[1280px] mx-auto px-6 lg:px-8">
           <Reveal>
-            <LocationsMap />
+            <LocationsMap branches={branches} workshops={workshops} />
           </Reveal>
         </div>
       </section>
@@ -249,23 +300,23 @@ export function ContactPage() {
                 {
                   icon: MapPin,
                   label: 'HEADQUARTERS & HUBS',
-                  value: 'Amwaj, Bahrain · King Faisal Road, Khobar · Muscat, Oman',
+                  value: hqSummary,
                 },
                 {
                   icon: Phone,
                   label: 'PHONE (BHR / KSA / OMN)',
-                  value: '+973 6666 6064 · +966 56 887 7769 · +968 7745 9000',
+                  value: `${bahrainPhone} · ${ksaPhone} · ${omanPhone}`,
                   mono: true,
                 },
                 {
                   icon: Mail,
                   label: 'DIRECT DESKS',
-                  value: 'sales@jadeergulf.com · Maisara@jadeergulf.com · info@jadeergulf.com',
+                  value: `${salesEmail} · ${supportEmail} · ${generalEmail}`,
                 },
                 {
                   icon: Clock,
                   label: 'BUSINESS HOURS',
-                  value: 'Sun–Thu · 8:30 AM – 5:30 PM | Fri: Closed | Sat · 9:00 AM – 1:00 PM',
+                  value: hoursFull,
                 },
               ].map((row) => {
                 const Icon = row.icon;

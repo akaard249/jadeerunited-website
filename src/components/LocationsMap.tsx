@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Minus, RotateCcw, MapPin, Clock, Phone } from 'lucide-react';
 import { EASE_LUXURY } from './MotionPrimitives';
+import type { BranchRecord, WorkshopRecord } from '../types';
 
 export interface GccLocation {
   id: string;
@@ -200,15 +201,54 @@ export const GCC_LOCATIONS: GccLocation[] = [
   },
 ];
 
-export function LocationsMap() {
+export function LocationsMap({
+  branches,
+  workshops,
+}: {
+  branches?: BranchRecord[];
+  workshops?: WorkshopRecord[];
+}) {
   const [filterType, setFilterType] = useState<'all' | 'branch' | 'workshop'>('all');
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string>('khobar-hq');
+  const [selectedId, setSelectedId] = useState<string>('');
   const [zoom, setZoom] = useState(1);
+
+  const locations = useMemo<GccLocation[]>(() => {
+    const hasLive = (branches && branches.length > 0) || (workshops && workshops.length > 0);
+    if (!hasLive) return GCC_LOCATIONS;
+
+    const liveBranches: GccLocation[] = (branches || []).map((b) => ({
+      id: `branch-${b.id}`,
+      name: b.name,
+      type: 'branch',
+      country: (b.country === 'Bahrain' || b.country === 'Oman' ? b.country : 'Saudi Arabia'),
+      city: b.city,
+      address: b.address || `${b.city}, ${b.country}`,
+      hours: b.hours || 'Sun–Thu · 8:30 AM – 5:30 PM',
+      phone: b.phone,
+      x: Number(b.map_x) || 565,
+      y: Number(b.map_y) || 256,
+    }));
+
+    const liveWorkshops: GccLocation[] = (workshops || []).map((w) => ({
+      id: `workshop-${w.id}`,
+      name: w.name,
+      type: 'workshop',
+      country: (w.country === 'Bahrain' || w.country === 'Oman' ? w.country : 'Saudi Arabia'),
+      city: w.city,
+      address: w.address || `${w.city}, ${w.country}`,
+      hours: w.hours || 'Sun–Thu · 8:00 AM – 6:00 PM',
+      phone: w.phone,
+      x: Number(w.map_x) || 554,
+      y: Number(w.map_y) || 274,
+    }));
+
+    return [...liveBranches, ...liveWorkshops];
+  }, [branches, workshops]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return GCC_LOCATIONS.filter((loc) => {
+    return locations.filter((loc) => {
       if (filterType !== 'all' && loc.type !== filterType) return false;
       if (!q) return true;
       return (
@@ -218,13 +258,13 @@ export function LocationsMap() {
         loc.address.toLowerCase().includes(q)
       );
     });
-  }, [filterType, search]);
+  }, [locations, filterType, search]);
 
   const selected =
     filtered.find((l) => l.id === selectedId) ||
-    GCC_LOCATIONS.find((l) => l.id === selectedId) ||
+    locations.find((l) => l.id === selectedId) ||
     filtered[0] ||
-    GCC_LOCATIONS[0];
+    locations[0];
 
   return (
     <div className="space-y-6">

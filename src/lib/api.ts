@@ -1,5 +1,7 @@
 import type {
+  AboutGalleryItem,
   AdminDashboardStats,
+  AdminPrivilege,
   AdminUser,
   Article,
   BranchRecord,
@@ -57,6 +59,7 @@ export const api = {
       offers: Offer[];
       articles: Article[];
       reviews: ClientReview[];
+      branches: BranchRecord[];
       siteContent: Partial<SiteContent>;
     }>('/api/home'),
 
@@ -65,6 +68,7 @@ export const api = {
       content: Partial<SiteContent>;
       branches: BranchRecord[];
       workshops: WorkshopRecord[];
+      gallery: AboutGalleryItem[];
       reviews: ClientReview[];
     }>('/api/site-content'),
 
@@ -99,6 +103,11 @@ export const api = {
 
   getVehicle: (id: number) =>
     requestJson<{ vehicle: Vehicle; related: Vehicle[] }>(`/api/vehicles/${id}`),
+
+  getVehicleBySlug: (section: 'showroom' | 'used-cars', brand: string, model: string) =>
+    requestJson<{ vehicle: Vehicle; related: Vehicle[] }>(
+      `/api/vehicles/by-slug/${encodeURIComponent(section)}/${encodeURIComponent(brand)}/${encodeURIComponent(model)}`
+    ),
 
   getOffers: () => requestJson<{ offers: Offer[] }>('/api/offers'),
 
@@ -253,4 +262,107 @@ export const api = {
 
   deleteAdminReview: (id: number) =>
     requestJson<{ deleted: boolean }>(`/api/admin/reviews/${id}`, { method: 'DELETE' }, true),
+
+  // Website Management CMS (Hero, About Gallery, Branches, Workshops, Contact Info)
+  uploadAdminImage: (file: File) => {
+    const fd = new FormData();
+    fd.append('image', file);
+    return requestJson<{ image_url: string }>('/api/admin/upload', { method: 'POST', body: fd }, true);
+  },
+
+  getAdminSiteContent: () =>
+    requestJson<{
+      content: Partial<SiteContent>;
+      gallery: AboutGalleryItem[];
+      branches: BranchRecord[];
+      workshops: WorkshopRecord[];
+      availableAssets: string[];
+    }>('/api/admin/site-content', {}, true),
+
+  updateAdminSiteContent: (content: Partial<SiteContent>) =>
+    requestJson<{ content: Partial<SiteContent> }>(
+      '/api/admin/site-content',
+      { method: 'PUT', body: JSON.stringify({ content }) },
+      true
+    ),
+
+  createAdminGalleryItem: (formData: FormData) =>
+    requestJson<{ item: AboutGalleryItem }>('/api/admin/gallery', { method: 'POST', body: formData }, true),
+
+  updateAdminGalleryItem: (id: number, formData: FormData) =>
+    requestJson<{ item: AboutGalleryItem }>(`/api/admin/gallery/${id}`, { method: 'PUT', body: formData }, true),
+
+  deleteAdminGalleryItem: (id: number) =>
+    requestJson<{ deleted: boolean }>(`/api/admin/gallery/${id}`, { method: 'DELETE' }, true),
+
+  createAdminBranch: (payload: Omit<BranchRecord, 'id'>) =>
+    requestJson<{ branch: BranchRecord }>(
+      '/api/admin/branches',
+      { method: 'POST', body: JSON.stringify(payload) },
+      true
+    ),
+
+  updateAdminBranch: (id: number, payload: Partial<Omit<BranchRecord, 'id'>>) =>
+    requestJson<{ branch: BranchRecord }>(
+      `/api/admin/branches/${id}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      true
+    ),
+
+  deleteAdminBranch: (id: number) =>
+    requestJson<{ deleted: boolean }>(`/api/admin/branches/${id}`, { method: 'DELETE' }, true),
+
+  createAdminWorkshop: (payload: Omit<WorkshopRecord, 'id'>) =>
+    requestJson<{ workshop: WorkshopRecord }>(
+      '/api/admin/workshops',
+      { method: 'POST', body: JSON.stringify(payload) },
+      true
+    ),
+
+  updateAdminWorkshop: (id: number, payload: Partial<Omit<WorkshopRecord, 'id'>>) =>
+    requestJson<{ workshop: WorkshopRecord }>(
+      `/api/admin/workshops/${id}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      true
+    ),
+
+  deleteAdminWorkshop: (id: number) =>
+    requestJson<{ deleted: boolean }>(`/api/admin/workshops/${id}`, { method: 'DELETE' }, true),
+
+  // Admin Team & Section Privileges
+  getAdminUsers: () =>
+    requestJson<{ users: AdminUser[] }>('/api/admin/users', {}, true),
+
+  createAdminUser: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: 'super_admin' | 'staff';
+    privileges: AdminPrivilege[];
+  }) =>
+    requestJson<{ user: AdminUser }>(
+      '/api/admin/users',
+      { method: 'POST', body: JSON.stringify(payload) },
+      true
+    ),
+
+  updateAdminUser: (
+    id: number,
+    payload: {
+      name: string;
+      email: string;
+      role: 'super_admin' | 'staff';
+      privileges: AdminPrivilege[];
+      is_active: boolean;
+      password?: string;
+    }
+  ) =>
+    requestJson<{ user: AdminUser }>(
+      `/api/admin/users/${id}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      true
+    ),
+
+  deleteAdminUser: (id: number) =>
+    requestJson<{ deleted: boolean }>(`/api/admin/users/${id}`, { method: 'DELETE' }, true),
 };

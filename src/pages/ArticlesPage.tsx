@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import type { Article } from '../types';
 import { VehicleImage } from '../components/BrandMark';
 import { useLanguage } from '../context/LanguageContext';
+import { usePageSeo } from '../hooks/usePageSeo';
 import {
   AmbientGoldBackdrop,
   GoldGlowCard,
@@ -23,6 +24,14 @@ const ARTICLE_CATEGORIES = [
 
 export function ArticlesPage() {
   const { pick } = useLanguage();
+
+  usePageSeo({
+    title: 'News, Fleet Insights & Vision 2030 Mobility | Jadeer United',
+    description:
+      'Insights on GCC corporate operational leasing, Vision 2030 hybrid fleet transitions, HSE telematics, and new showroom launches from Jadeer United.',
+    canonicalPath: '/articles',
+    image: '/assets/jadeer/hero-fleet.jpg',
+  });
   const [articles, setArticles] = useState<Article[]>([]);
   const [category, setCategory] = useState('All');
   const [search, setSearch] = useState('');

@@ -14,10 +14,14 @@ import {
   Trash2,
   Star,
   MessageSquareQuote,
+  Globe,
+  Users,
+  ShieldCheck,
 } from 'lucide-react';
 import { api, getAdminSession } from '../lib/api';
 import type {
   AdminDashboardStats,
+  AdminPrivilege,
   AdminUser,
   ClientReview,
   ContactMessageRecord,
@@ -29,9 +33,19 @@ import type {
 import { JadeerLogoMark, VehicleImage } from '../components/BrandMark';
 import { VehicleFormModal } from '../components/admin/VehicleFormModal';
 import { QuotationDetailModal } from '../components/admin/QuotationDetailModal';
+import { WebsiteCmsPanel } from '../components/admin/WebsiteCmsPanel';
+import { AdminUsersPanel } from '../components/admin/AdminUsersPanel';
 import { AmbientGoldBackdrop, EASE_LUXURY } from '../components/MotionPrimitives';
+import { usePageSeo } from '../hooks/usePageSeo';
 
-type AdminTab = 'dashboard' | 'vehicles' | 'quotations' | 'messages' | 'reviews';
+type AdminTab =
+  | 'dashboard'
+  | 'vehicles'
+  | 'quotations'
+  | 'website'
+  | 'messages'
+  | 'reviews'
+  | 'admins';
 
 const QUOTATION_STATUS_TEXT: Record<QuotationStatus, { label: string; color: string }> = {
   new: { label: 'New', color: 'text-[#FBBF24]' },
@@ -43,6 +57,13 @@ const QUOTATION_STATUS_TEXT: Record<QuotationStatus, { label: string; color: str
 };
 
 export function AdminPage() {
+  usePageSeo({
+    title: 'Admin Console | Jadeer United',
+    description: 'Internal fleet administration portal.',
+    canonicalPath: '/admin',
+    robots: 'noindex, nofollow, noarchive',
+  });
+
   const existingSession = getAdminSession();
   const [adminUser, setAdminUser] = useState<AdminUser | null>(existingSession.user);
   const [authStatus, setAuthStatus] = useState<{
@@ -159,8 +180,24 @@ export function AdminPage() {
     }
   };
 
+  const can = (priv: AdminPrivilege): boolean => {
+    if (!adminUser) return false;
+    return adminUser.role === 'super_admin' || (adminUser.privileges || []).includes(priv);
+  };
+
   useEffect(() => {
     if (!adminUser) return;
+    if (
+      (activeTab === 'vehicles' && !can('vehicles')) ||
+      (activeTab === 'quotations' && !can('quotations')) ||
+      ((activeTab === 'website' || activeTab === 'messages' || activeTab === 'reviews') &&
+        !can('website')) ||
+      (activeTab === 'admins' && !can('admins'))
+    ) {
+      setActiveTab('dashboard');
+      return;
+    }
+
     if (activeTab === 'dashboard') loadDashboard();
     if (activeTab === 'vehicles') loadVehicles();
     if (activeTab === 'quotations') loadQuotations();
@@ -342,17 +379,43 @@ export function AdminPage() {
     activeTab === 'dashboard'
       ? 'Dashboard'
       : activeTab === 'vehicles'
-        ? 'Fleet & Used Inventory'
+        ? 'Car Input & Fleet Inventory'
         : activeTab === 'quotations'
           ? 'Quotation Requests'
-          : activeTab === 'reviews'
-            ? 'Client Reviews'
-            : 'Contact Messages';
+          : activeTab === 'website'
+            ? 'Website Management (CMS)'
+            : activeTab === 'messages'
+              ? 'Contact Messages'
+              : activeTab === 'reviews'
+                ? 'Client Reviews'
+                : 'Admin Team & Roles';
+
+  const navItems: Array<{
+    id: AdminTab;
+    label: string;
+    icon: typeof LayoutDashboard;
+    visible: boolean;
+  }> = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, visible: true },
+    { id: 'vehicles', label: 'Vehicles (Showroom & Used)', icon: Car, visible: can('vehicles') },
+    { id: 'quotations', label: 'Quotation Requests', icon: FileText, visible: can('quotations') },
+    { id: 'website', label: 'Website Management', icon: Globe, visible: can('website') },
+    { id: 'messages', label: 'Contact Messages', icon: Mail, visible: can('website') },
+    { id: 'reviews', label: 'Client Reviews', icon: MessageSquareQuote, visible: can('website') },
+    { id: 'admins', label: 'Admin Team & Roles', icon: Users, visible: can('admins') },
+  ];
+
+  const PRIVILEGE_SHORT: Record<AdminPrivilege, string> = {
+    vehicles: 'Cars',
+    quotations: 'Quotes',
+    website: 'Website',
+    admins: 'Admins',
+  };
 
   return (
     <div className="min-h-screen bg-[#0B0B0D] text-[#E4E0D8] flex flex-col lg:flex-row">
       {/* Left Sidebar */}
-      <aside className="w-full lg:w-[256px] bg-[#111114] text-[#D4D4DC] shrink-0 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-white/[0.08]">
+      <aside className="w-full lg:w-[264px] bg-[#111114] text-[#D4D4DC] shrink-0 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-white/[0.08]">
         <div>
           <div className="h-16 px-6 flex items-center gap-2.5 border-b border-white/[0.08]">
             <JadeerLogoMark className="h-6 w-6" tone="gold" />
@@ -362,38 +425,52 @@ export function AdminPage() {
           </div>
 
           <nav className="p-3 space-y-1">
-            {[
-              { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
-              { id: 'vehicles' as const, label: 'Vehicles (Showroom & Used)', icon: Car },
-              { id: 'quotations' as const, label: 'Quotation Requests', icon: FileText },
-              { id: 'messages' as const, label: 'Contact Messages', icon: Mail },
-              { id: 'reviews' as const, label: 'Client Reviews', icon: MessageSquareQuote },
-            ].map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors text-left ${
-                    isActive
-                      ? 'bg-[#C8A45D] text-[#0B0B0D]'
-                      : 'text-[#B4B0A8] hover:text-white hover:bg-white/[0.06]'
-                  }`}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{item.label}</span>
-                </button>
-              );
-            })}
+            {navItems
+              .filter((item) => item.visible)
+              .map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveTab(item.id)}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-medium rounded-lg transition-colors text-left ${
+                      isActive
+                        ? 'bg-[#C8A45D] text-[#0B0B0D]'
+                        : 'text-[#B4B0A8] hover:text-white hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
           </nav>
         </div>
 
         <div className="p-4 border-t border-white/[0.08] space-y-3">
-          <div className="px-2">
-            <div className="text-xs font-medium text-white truncate">{adminUser.name}</div>
+          <div className="px-2 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-white truncate">{adminUser.name}</div>
+              <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#C8A45D]/15 text-[#C8A45D] shrink-0">
+                {adminUser.role === 'super_admin' ? 'Super' : 'Staff'}
+              </span>
+            </div>
             <div className="text-xs text-[#949088] truncate">{adminUser.email}</div>
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {(adminUser.role === 'super_admin'
+                ? (['vehicles', 'quotations', 'website', 'admins'] as AdminPrivilege[])
+                : adminUser.privileges || []
+              ).map((p) => (
+                <span
+                  key={p}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-[#B4B0A8] border border-white/[0.06]"
+                >
+                  {PRIVILEGE_SHORT[p]}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Link
@@ -426,7 +503,7 @@ export function AdminPage() {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            {activeTab === 'vehicles' && (
+            {activeTab === 'vehicles' && can('vehicles') && (
               <button
                 type="button"
                 onClick={() => {
@@ -448,89 +525,167 @@ export function AdminPage() {
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
-                  { label: 'Showroom Cars', value: stats?.totalShowroom ?? '—', tab: 'vehicles' as const },
-                  { label: 'Certified Used Cars', value: stats?.totalUsed ?? '—', tab: 'vehicles' as const },
-                  { label: 'Quotation Requests', value: stats?.totalQuotations ?? '—', tab: 'quotations' as const },
-                  { label: 'New / Pending Quotes', value: stats?.pendingQuotations ?? '—', tab: 'quotations' as const },
-                  { label: 'Client Reviews', value: stats?.totalReviews ?? '—', tab: 'reviews' as const },
-                ].map((kpi) => (
-                  <motion.button
-                    key={kpi.label}
-                    type="button"
-                    whileHover={{ y: -2 }}
-                    onClick={() => setActiveTab(kpi.tab)}
-                    className="text-left bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl p-5 transition-colors"
-                  >
-                    <div className="text-xs text-[#B4B0A8]">{kpi.label}</div>
-                    <div className="mt-2 font-mono tabular-nums text-3xl font-bold text-[#C8A45D]">
-                      {kpi.value}
-                    </div>
-                  </motion.button>
-                ))}
+                  {
+                    label: 'Showroom Cars',
+                    value: stats?.totalShowroom ?? '—',
+                    tab: 'vehicles' as const,
+                    allowed: can('vehicles'),
+                  },
+                  {
+                    label: 'Certified Used Cars',
+                    value: stats?.totalUsed ?? '—',
+                    tab: 'vehicles' as const,
+                    allowed: can('vehicles'),
+                  },
+                  {
+                    label: 'Quotation Requests',
+                    value: stats?.totalQuotations ?? '—',
+                    tab: 'quotations' as const,
+                    allowed: can('quotations'),
+                  },
+                  {
+                    label: 'New / Pending Quotes',
+                    value: stats?.pendingQuotations ?? '—',
+                    tab: 'quotations' as const,
+                    allowed: can('quotations'),
+                  },
+                  {
+                    label: 'Client Reviews',
+                    value: stats?.totalReviews ?? '—',
+                    tab: 'reviews' as const,
+                    allowed: can('website'),
+                  },
+                ]
+                  .filter((k) => k.allowed)
+                  .map((kpi) => (
+                    <motion.button
+                      key={kpi.label}
+                      type="button"
+                      whileHover={{ y: -2 }}
+                      onClick={() => setActiveTab(kpi.tab)}
+                      className="text-left bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl p-5 transition-colors"
+                    >
+                      <div className="text-xs text-[#B4B0A8]">{kpi.label}</div>
+                      <div className="mt-2 font-mono tabular-nums text-3xl font-bold text-[#C8A45D]">
+                        {kpi.value}
+                      </div>
+                    </motion.button>
+                  ))}
               </div>
 
-              <div className="bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-white/[0.08] flex items-center justify-between">
-                  <h2 className="font-display text-base font-semibold text-white">
-                    Recent Quotation Requests
-                  </h2>
+              {/* Quick Section Shortcuts */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {can('website') && (
                   <button
                     type="button"
-                    onClick={() => setActiveTab('quotations')}
-                    className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
+                    onClick={() => setActiveTab('website')}
+                    className="text-left p-5 bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl transition-colors space-y-1.5"
                   >
-                    Manage all requests
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <Globe className="h-4 w-4 text-[#C8A45D]" />
+                      <span>Website Management Studio</span>
+                    </div>
+                    <p className="text-xs text-[#949088]">
+                      Update Main Page Hero, About Us Photo Gallery, GCC Branches, Workshops &amp; Contact Info.
+                    </p>
                   </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#101014] text-xs text-[#B4B0A8] border-b border-white/[0.08]">
-                      <tr>
-                        <th className="py-3 px-4 font-medium">Reference</th>
-                        <th className="py-3 px-4 font-medium">Client / Company</th>
-                        <th className="py-3 px-4 font-medium">Market</th>
-                        <th className="py-3 px-4 font-medium text-right">Units · Term</th>
-                        <th className="py-3 px-4 font-medium">Status</th>
-                        <th className="py-3 px-4 font-medium text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/[0.06]">
-                      {recentQuotations.map((q) => (
-                        <tr key={q.id} className="hover:bg-white/[0.02]">
-                          <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#C8A45D]">
-                            {q.reference_code}
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="font-medium text-white">{q.full_name}</div>
-                            <div className="text-xs text-[#B4B0A8]">
-                              {q.company_name || 'Individual'} · {q.vehicle_label || q.offer_title || 'General Fleet'}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-[#D4D4DC]">
-                            {q.country} · {q.city}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
-                            {q.fleet_quantity} × {q.lease_term_months}m
-                          </td>
-                          <td className={`py-3 px-4 text-xs font-medium ${QUOTATION_STATUS_TEXT[q.status].color}`}>
-                            {QUOTATION_STATUS_TEXT[q.status].label}
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedQuotation(q)}
-                              className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
-                            >
-                              Review
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                )}
+                {can('vehicles') && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('vehicles')}
+                    className="text-left p-5 bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl transition-colors space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <Car className="h-4 w-4 text-[#C8A45D]" />
+                      <span>Car Input &amp; Inventory</span>
+                    </div>
+                    <p className="text-xs text-[#949088]">
+                      Add new Showroom leasing models, update Used Cars, upload images, and manage availability.
+                    </p>
+                  </button>
+                )}
+                {can('admins') && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('admins')}
+                    className="text-left p-5 bg-[#141418] border border-white/[0.08] hover:border-[#C8A45D]/50 rounded-xl transition-colors space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                      <ShieldCheck className="h-4 w-4 text-[#C8A45D]" />
+                      <span>Admin Team &amp; Privileges</span>
+                    </div>
+                    <p className="text-xs text-[#949088]">
+                      Create staff logins with granular permissions for Cars, Quotations, or Website CMS.
+                    </p>
+                  </button>
+                )}
               </div>
+
+              {can('quotations') && (
+                <div className="bg-[#141418] border border-white/[0.08] rounded-xl overflow-hidden">
+                  <div className="px-6 py-4 border-b border-white/[0.08] flex items-center justify-between">
+                    <h2 className="font-display text-base font-semibold text-white">
+                      Recent Quotation Requests
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('quotations')}
+                      className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
+                    >
+                      Manage all requests
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-[#101014] text-xs text-[#B4B0A8] border-b border-white/[0.08]">
+                        <tr>
+                          <th className="py-3 px-4 font-medium">Reference</th>
+                          <th className="py-3 px-4 font-medium">Client / Company</th>
+                          <th className="py-3 px-4 font-medium">Market</th>
+                          <th className="py-3 px-4 font-medium text-right">Units · Term</th>
+                          <th className="py-3 px-4 font-medium">Status</th>
+                          <th className="py-3 px-4 font-medium text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.06]">
+                        {recentQuotations.map((q) => (
+                          <tr key={q.id} className="hover:bg-white/[0.02]">
+                            <td className="py-3 px-4 font-mono tabular-nums text-xs text-[#C8A45D]">
+                              {q.reference_code}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="font-medium text-white">{q.full_name}</div>
+                              <div className="text-xs text-[#B4B0A8]">
+                                {q.company_name || 'Individual'} · {q.vehicle_label || q.offer_title || 'General Fleet'}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-[#D4D4DC]">
+                              {q.country} · {q.city}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
+                              {q.fleet_quantity} × {q.lease_term_months}m
+                            </td>
+                            <td className={`py-3 px-4 text-xs font-medium ${QUOTATION_STATUS_TEXT[q.status].color}`}>
+                              {QUOTATION_STATUS_TEXT[q.status].label}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedQuotation(q)}
+                                className="text-xs font-medium text-[#C8A45D] hover:text-[#EBD4A0]"
+                              >
+                                Review
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -982,6 +1137,12 @@ export function AdminPage() {
               )}
             </div>
           )}
+
+          {/* WEBSITE MANAGEMENT CMS */}
+          {activeTab === 'website' && can('website') && <WebsiteCmsPanel />}
+
+          {/* ADMIN TEAM & PRIVILEGES */}
+          {activeTab === 'admins' && can('admins') && <AdminUsersPanel currentUser={adminUser} />}
         </div>
       </div>
 

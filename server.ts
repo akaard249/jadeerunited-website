@@ -5,7 +5,8 @@ import path from 'path';
 import multer from 'multer';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { db, initializeDatabase } from './server/db.ts';
+import { db, initializeDatabase, resolveUniqueVehicleSlugs, slugifySegment } from './server/db.ts';
+import { buildLlmsTxt, buildRobotsTxt, buildSitemapXml, injectRouteSeoHtml } from './server/seo.ts';
 
 dotenv.config();
 initializeDatabase();
@@ -13,7 +14,48 @@ initializeDatabase();
 const app = express();
 const PORT = 3000;
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
+
+function getOrigin(req: Request): string {
+  const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (configured && /^https?:\/\//i.test(configured) && !configured.includes('MY_APP_URL')) {
+    return configured;
+  }
+  const proto = req.headers['x-forwarded-proto']
+    ? String(req.headers['x-forwarded-proto']).split(',')[0].trim()
+    : req.protocol || 'http';
+  const host = req.get('host') || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+// Block search engines & AI crawlers from indexing /admin and /api/admin
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.path === '/admin' || req.path.startsWith('/admin/') || req.path.startsWith('/api/admin')) {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
+  next();
+});
+
+// ============================================================
+// SEARCH ENGINE & AI CRAWLER DISCOVERY ROUTES
+// ============================================================
+
+app.get('/robots.txt', (req: Request, res: Response) => {
+  res.type('text/plain; charset=utf-8').send(buildRobotsTxt(getOrigin(req)));
+});
+
+app.get('/sitemap.xml', (req: Request, res: Response) => {
+  res.type('application/xml; charset=utf-8').send(buildSitemapXml(getOrigin(req)));
+});
+
+app.get('/llms.txt', (req: Request, res: Response) => {
+  res.type('text/markdown; charset=utf-8').send(buildLlmsTxt(getOrigin(req), false));
+});
+
+app.get('/llms-full.txt', (req: Request, res: Response) => {
+  res.type('text/markdown; charset=utf-8').send(buildLlmsTxt(getOrigin(req), true));
+});
 
 // Ensure uploads directory exists
 const uploadsDir = path.resolve(process.cwd(), 'uploads');
@@ -125,10 +167,16 @@ function parseJsonSafe<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function formatVehicleRow(row: Record<string, unknown>) {
+  const brandSlug = String(row.brand_slug || '').trim() || slugifySegment(String(row.make || 'vehicle'));
+  const modelSlug = String(row.model_slug || '').trim() || slugifySegment(String(row.model || 'model'));
+  const section = row.listing_type === 'showroom' ? 'showroom' : 'used-cars';
   return {
     id: row.id,
     make: row.make,
     model: row.model,
+    brand_slug: brandSlug,
+    model_slug: modelSlug,
+    canonical_path: `/${section}/${brandSlug}/${modelSlug}`,
     year: row.year,
     category: row.category,
     sub_type: row.sub_type || '',
@@ -239,6 +287,32 @@ function formatQuotationRow(row: Record<string, unknown>) {
   };
 }
 
+type AdminPrivilege = 'vehicles' | 'quotations' | 'website' | 'admins';
+const ALL_PRIVILEGES: AdminPrivilege[] = ['vehicles', 'quotations', 'website', 'admins'];
+const VALID_PRIVILEGE_SET = new Set<string>(ALL_PRIVILEGES);
+
+function normalizePrivileges(raw: unknown, role: string): AdminPrivilege[] {
+  if (role === 'super_admin') return [...ALL_PRIVILEGES];
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (typeof raw === 'string') {
+    list = parseJsonSafe<unknown[]>(raw, []);
+  }
+  const clean = Array.from(
+    new Set(list.map((p) => String(p).trim()).filter((p) => VALID_PRIVILEGE_SET.has(p)))
+  ) as AdminPrivilege[];
+  return clean;
+}
+
+function hasPrivilege(
+  admin: { role: 'super_admin' | 'staff'; privileges: AdminPrivilege[] } | undefined,
+  priv: AdminPrivilege
+): boolean {
+  if (!admin) return false;
+  return admin.role === 'super_admin' || admin.privileges.includes(priv);
+}
+
 function createAdminSession(adminId: number, email: string, name: string): string {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = sha256(token);
@@ -250,7 +324,13 @@ function createAdminSession(adminId: number, email: string, name: string): strin
 }
 
 interface AuthenticatedRequest extends Request {
-  admin?: { id: number; email: string; name: string };
+  admin?: {
+    id: number;
+    email: string;
+    name: string;
+    role: 'super_admin' | 'staff';
+    privileges: AdminPrivilege[];
+  };
 }
 
 function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
@@ -282,8 +362,80 @@ function requireAdmin(req: AuthenticatedRequest, res: Response, next: NextFuncti
     res.status(401).json({ error: 'Session expired. Please sign in again.' });
     return;
   }
-  req.admin = { id: session.admin_id, email: session.email, name: session.name };
+
+  if (session.admin_id === 0) {
+    req.admin = {
+      id: 0,
+      email: session.email,
+      name: session.name,
+      role: 'super_admin',
+      privileges: [...ALL_PRIVILEGES],
+    };
+    next();
+    return;
+  }
+
+  const dbUser = db
+    .prepare(
+      `SELECT id, name, email, role, privileges, is_admin, is_active FROM admin_users WHERE id = ?`
+    )
+    .get(session.admin_id) as
+    | {
+        id: number;
+        name: string;
+        email: string;
+        role: string;
+        privileges: string;
+        is_admin: number;
+        is_active: number;
+      }
+    | undefined;
+
+  if (!dbUser || !dbUser.is_admin || !dbUser.is_active) {
+    db.prepare(`DELETE FROM admin_sessions WHERE token_hash = ?`).run(tokenHash);
+    res.status(401).json({ error: 'Administrator account is inactive or no longer exists.' });
+    return;
+  }
+
+  const role: 'super_admin' | 'staff' = dbUser.role === 'super_admin' ? 'super_admin' : 'staff';
+  req.admin = {
+    id: dbUser.id,
+    email: dbUser.email,
+    name: dbUser.name,
+    role,
+    privileges: normalizePrivileges(dbUser.privileges, role),
+  };
   next();
+}
+
+function requirePrivilege(priv: AdminPrivilege) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!hasPrivilege(req.admin, priv)) {
+      res.status(403).json({ error: 'Access denied: your account does not have permission for this section.' });
+      return;
+    }
+    next();
+  };
+}
+
+function listAvailableStudioAssets(): string[] {
+  const jadeerDir = path.resolve(process.cwd(), 'public', 'assets', 'jadeer');
+  if (!fs.existsSync(jadeerDir)) return [];
+  return fs
+    .readdirSync(jadeerDir)
+    .filter((f) => /\.(jpg|jpeg|png|webp)$/i.test(f))
+    .sort()
+    .map((f) => `/assets/jadeer/${f}`);
+}
+
+function cleanupUploadedImage(imageUrl: string): void {
+  if (imageUrl && /^\/uploads\/[a-f0-9]{32}\.(jpg|png|webp)$/.test(imageUrl)) {
+    const filename = imageUrl.replace('/uploads/', '');
+    const targetPath = path.resolve(uploadsDir, filename);
+    if (targetPath.startsWith(uploadsDir + path.sep) && fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+  }
 }
 
 // ============================================================
@@ -319,9 +471,17 @@ app.get('/api/home', (_req: Request, res: Response) => {
     .all()
     .map((r) => formatReviewRow(r as Record<string, unknown>));
 
+  const branches = db
+    .prepare(`SELECT * FROM branches ORDER BY is_hq DESC, id ASC`)
+    .all()
+    .map((b) => ({
+      ...(b as Record<string, unknown>),
+      is_hq: Boolean((b as Record<string, unknown>).is_hq),
+    }));
+
   const siteContent = getSiteContentMap();
 
-  res.json({ showroomFeatured, usedFeatured, offers, articles, reviews, siteContent });
+  res.json({ showroomFeatured, usedFeatured, offers, articles, reviews, branches, siteContent });
 });
 
 app.get('/api/site-content', (_req: Request, res: Response) => {
@@ -334,11 +494,12 @@ app.get('/api/site-content', (_req: Request, res: Response) => {
       is_hq: Boolean((b as Record<string, unknown>).is_hq),
     }));
   const workshops = db.prepare(`SELECT * FROM workshops ORDER BY id ASC`).all();
+  const gallery = db.prepare(`SELECT * FROM about_gallery ORDER BY sort_order ASC, id ASC`).all();
   const reviews = db
     .prepare(`SELECT * FROM client_reviews ORDER BY id DESC`)
     .all()
     .map((r) => formatReviewRow(r as Record<string, unknown>));
-  res.json({ content, branches, workshops, reviews });
+  res.json({ content, branches, workshops, gallery, reviews });
 });
 
 app.get('/api/reviews', (_req: Request, res: Response) => {
@@ -462,6 +623,38 @@ app.get('/api/vehicles', (req: Request, res: Response) => {
     .map((r) => formatVehicleRow(r as Record<string, unknown>));
 
   res.json({ vehicles: rows });
+});
+
+app.get('/api/vehicles/by-slug/:section/:brand/:model', (req: Request, res: Response) => {
+  const section = String(req.params.section || '').trim().toLowerCase();
+  const brandSlug = slugifySegment(String(req.params.brand || ''));
+  const modelSlug = slugifySegment(String(req.params.model || ''));
+
+  if (section !== 'showroom' && section !== 'used-cars') {
+    res.status(400).json({ error: 'Invalid section. Use showroom or used-cars.' });
+    return;
+  }
+  const listingType = section === 'showroom' ? 'showroom' : 'used';
+
+  const row = db
+    .prepare(
+      `SELECT * FROM vehicles WHERE listing_type = ? AND brand_slug = ? AND model_slug = ? LIMIT 1`
+    )
+    .get(listingType, brandSlug, modelSlug) as Record<string, unknown> | undefined;
+
+  if (!row) {
+    res.status(404).json({ error: 'Vehicle not found' });
+    return;
+  }
+
+  const related = db
+    .prepare(
+      `SELECT * FROM vehicles WHERE listing_type = ? AND id != ? ORDER BY CASE WHEN brand_slug = ? THEN 0 ELSE 1 END, is_featured DESC LIMIT 3`
+    )
+    .all(listingType, row.id, brandSlug)
+    .map((r) => formatVehicleRow(r as Record<string, unknown>));
+
+  res.json({ vehicle: formatVehicleRow(row), related });
 });
 
 app.get('/api/vehicles/:id', (req: Request, res: Response) => {
@@ -746,8 +939,11 @@ app.post('/api/admin/auth/setup', (req: Request, res: Response) => {
     }
     const passwordHash = hashPassword(password);
     const info = db
-      .prepare(`INSERT INTO admin_users (name, email, password_hash, is_admin) VALUES (?, ?, ?, 1)`)
-      .run(name || 'Jadeer Fleet Admin', email, passwordHash);
+      .prepare(
+        `INSERT INTO admin_users (name, email, password_hash, is_admin, role, privileges, is_active)
+         VALUES (?, ?, ?, 1, 'super_admin', ?, 1)`
+      )
+      .run(name || 'Jadeer Fleet Admin', email, passwordHash, JSON.stringify(ALL_PRIVILEGES));
     return Number(info.lastInsertRowid);
   });
 
@@ -760,7 +956,13 @@ app.post('/api/admin/auth/setup', (req: Request, res: Response) => {
   const token = createAdminSession(adminId, email, name || 'Jadeer Fleet Admin');
   res.status(201).json({
     token,
-    admin: { id: adminId, email, name: name || 'Jadeer Fleet Admin' },
+    admin: {
+      id: adminId,
+      email,
+      name: name || 'Jadeer Fleet Admin',
+      role: 'super_admin' as const,
+      privileges: [...ALL_PRIVILEGES],
+    },
   });
 });
 
@@ -770,35 +972,50 @@ app.post('/api/admin/auth/login', (req: Request, res: Response) => {
   const password = String(body.password || '');
 
   const envPasscode = getEnvPasscode();
-  if (envPasscode.length > 0) {
-    if (!timingSafeStringEqual(password, envPasscode)) {
-      res.status(401).json({ error: 'Invalid admin credentials.' });
-      return;
-    }
+  if (envPasscode.length > 0 && timingSafeStringEqual(password, envPasscode)) {
     const adminEmail = EMAIL_REGEX.test(email) ? email : 'admin@jadeerunited.com';
     const token = createAdminSession(0, adminEmail, 'Jadeer Administrator');
     res.json({
       token,
-      admin: { id: 0, email: adminEmail, name: 'Jadeer Administrator' },
+      admin: {
+        id: 0,
+        email: adminEmail,
+        name: 'Jadeer Administrator',
+        role: 'super_admin' as const,
+        privileges: [...ALL_PRIVILEGES],
+      },
     });
     return;
   }
 
   const user = db
-    .prepare(`SELECT id, name, email, password_hash, is_admin FROM admin_users WHERE LOWER(email) = ?`)
+    .prepare(
+      `SELECT id, name, email, password_hash, is_admin, role, privileges, is_active FROM admin_users WHERE LOWER(email) = ?`
+    )
     .get(email) as
-    | { id: number; name: string; email: string; password_hash: string; is_admin: number }
+    | {
+        id: number;
+        name: string;
+        email: string;
+        password_hash: string;
+        is_admin: number;
+        role: string;
+        privileges: string;
+        is_active: number;
+      }
     | undefined;
 
-  if (!user || !user.is_admin || !verifyPassword(password, user.password_hash)) {
+  if (!user || !user.is_admin || !user.is_active || !verifyPassword(password, user.password_hash)) {
     res.status(401).json({ error: 'Invalid email or password.' });
     return;
   }
 
+  const role: 'super_admin' | 'staff' = user.role === 'super_admin' ? 'super_admin' : 'staff';
+  const privileges = normalizePrivileges(user.privileges, role);
   const token = createAdminSession(user.id, user.email, user.name);
   res.json({
     token,
-    admin: { id: user.id, email: user.email, name: user.name },
+    admin: { id: user.id, email: user.email, name: user.name, role, privileges },
   });
 });
 
@@ -818,7 +1035,7 @@ app.get('/api/admin/me', requireAdmin, (req: AuthenticatedRequest, res: Response
 // PROTECTED ADMIN PANEL ROUTES
 // ============================================================
 
-app.get('/api/admin/dashboard', requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/dashboard', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
   const totalShowroom = (
     db.prepare(`SELECT COUNT(*) as c FROM vehicles WHERE listing_type = 'showroom'`).get() as { c: number }
   ).c;
@@ -840,18 +1057,20 @@ app.get('/api/admin/dashboard', requireAdmin, (_req: AuthenticatedRequest, res: 
     db.prepare(`SELECT COUNT(*) as c FROM client_reviews`).get() as { c: number }
   ).c;
 
-  const recentQuotations = db
-    .prepare(
-      `SELECT q.*, v.make AS vehicle_make, v.model AS vehicle_model, v.year AS vehicle_year,
-              v.listing_type AS vehicle_listing_type, o.title AS offer_title
-       FROM quotation_requests q
-       LEFT JOIN vehicles v ON v.id = q.vehicle_id
-       LEFT JOIN offers o ON o.id = q.offer_id
-       ORDER BY q.created_at DESC
-       LIMIT 6`
-    )
-    .all()
-    .map((r) => formatQuotationRow(r as Record<string, unknown>));
+  const recentQuotations = hasPrivilege(req.admin, 'quotations')
+    ? db
+        .prepare(
+          `SELECT q.*, v.make AS vehicle_make, v.model AS vehicle_model, v.year AS vehicle_year,
+                  v.listing_type AS vehicle_listing_type, o.title AS offer_title
+           FROM quotation_requests q
+           LEFT JOIN vehicles v ON v.id = q.vehicle_id
+           LEFT JOIN offers o ON o.id = q.offer_id
+           ORDER BY q.created_at DESC
+           LIMIT 6`
+        )
+        .all()
+        .map((r) => formatQuotationRow(r as Record<string, unknown>))
+    : [];
 
   res.json({
     stats: {
@@ -881,7 +1100,7 @@ const VALID_CATEGORIES = new Set([
   'Commercial',
 ]);
 
-app.get('/api/admin/vehicles', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/vehicles', requireAdmin, requirePrivilege('vehicles'), (req: AuthenticatedRequest, res: Response) => {
   const listingType = typeof req.query.listing_type === 'string' ? req.query.listing_type.trim() : '';
   const search = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
   const conditions: string[] = [];
@@ -995,24 +1214,32 @@ function parseVehiclePayload(req: Request) {
   };
 }
 
-app.post('/api/admin/vehicles', requireAdmin, upload.single('image'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/vehicles', requireAdmin, requirePrivilege('vehicles'), upload.single('image'), (req: AuthenticatedRequest, res: Response) => {
   const parsed = parseVehiclePayload(req);
   if ('error' in parsed) {
     res.status(422).json({ error: parsed.error });
     return;
   }
   const d = parsed.data;
+  const { brand_slug, model_slug } = resolveUniqueVehicleSlugs(
+    d.listing_type,
+    d.make,
+    d.model,
+    d.year
+  );
   const info = db
     .prepare(
       `INSERT INTO vehicles (
-        make, model, year, category, listing_type, fuel_type, transmission,
+        make, model, brand_slug, model_slug, year, category, listing_type, fuel_type, transmission,
         mileage_km, price_or_monthly_rate, currency, country_availability,
         is_featured, status, image_url, description, safety_telematics_specs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       d.make,
       d.model,
+      brand_slug,
+      model_slug,
       d.year,
       d.category,
       d.listing_type,
@@ -1033,7 +1260,7 @@ app.post('/api/admin/vehicles', requireAdmin, upload.single('image'), (req: Auth
   res.status(201).json({ vehicle: formatVehicleRow(row) });
 });
 
-app.put('/api/admin/vehicles/:id', requireAdmin, upload.single('image'), (req: AuthenticatedRequest, res: Response) => {
+app.put('/api/admin/vehicles/:id', requireAdmin, requirePrivilege('vehicles'), upload.single('image'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid vehicle ID' });
@@ -1054,10 +1281,17 @@ app.put('/api/admin/vehicles/:id', requireAdmin, upload.single('image'), (req: A
   const finalImageUrl = req.file
     ? `/uploads/${req.file.filename}`
     : d.image_url || String(existing.image_url || '');
+  const { brand_slug, model_slug } = resolveUniqueVehicleSlugs(
+    d.listing_type,
+    d.make,
+    d.model,
+    d.year,
+    id
+  );
 
   db.prepare(
     `UPDATE vehicles SET
-      make = ?, model = ?, year = ?, category = ?, listing_type = ?,
+      make = ?, model = ?, brand_slug = ?, model_slug = ?, year = ?, category = ?, listing_type = ?,
       fuel_type = ?, transmission = ?, mileage_km = ?, price_or_monthly_rate = ?,
       currency = ?, country_availability = ?, is_featured = ?, status = ?,
       image_url = ?, description = ?, safety_telematics_specs = ?, updated_at = datetime('now')
@@ -1065,6 +1299,8 @@ app.put('/api/admin/vehicles/:id', requireAdmin, upload.single('image'), (req: A
   ).run(
     d.make,
     d.model,
+    brand_slug,
+    model_slug,
     d.year,
     d.category,
     d.listing_type,
@@ -1086,7 +1322,7 @@ app.put('/api/admin/vehicles/:id', requireAdmin, upload.single('image'), (req: A
   res.json({ vehicle: formatVehicleRow(updated) });
 });
 
-app.patch('/api/admin/vehicles/:id/quick', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/vehicles/:id/quick', requireAdmin, requirePrivilege('vehicles'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid vehicle ID' });
@@ -1115,7 +1351,7 @@ app.patch('/api/admin/vehicles/:id/quick', requireAdmin, (req: AuthenticatedRequ
   res.json({ vehicle: formatVehicleRow(updated) });
 });
 
-app.delete('/api/admin/vehicles/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/admin/vehicles/:id', requireAdmin, requirePrivilege('vehicles'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid vehicle ID' });
@@ -1146,7 +1382,7 @@ app.delete('/api/admin/vehicles/:id', requireAdmin, (req: AuthenticatedRequest, 
 // Admin Quotations Management
 const VALID_QUOTATION_STATUSES = new Set(['new', 'in_review', 'quoted', 'approved', 'rejected', 'closed']);
 
-app.get('/api/admin/quotations', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/quotations', requireAdmin, requirePrivilege('quotations'), (req: AuthenticatedRequest, res: Response) => {
   const status = typeof req.query.status === 'string' ? req.query.status.trim() : '';
   const country = typeof req.query.country === 'string' ? req.query.country.trim() : '';
   const search = typeof req.query.search === 'string' ? req.query.search.trim().toLowerCase() : '';
@@ -1187,7 +1423,7 @@ app.get('/api/admin/quotations', requireAdmin, (req: AuthenticatedRequest, res: 
   res.json({ quotations: rows });
 });
 
-app.patch('/api/admin/quotations/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/quotations/:id', requireAdmin, requirePrivilege('quotations'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid quotation ID' });
@@ -1244,7 +1480,7 @@ app.patch('/api/admin/quotations/:id', requireAdmin, (req: AuthenticatedRequest,
   res.json({ quotation: formatQuotationRow(updated) });
 });
 
-app.delete('/api/admin/quotations/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/admin/quotations/:id', requireAdmin, requirePrivilege('quotations'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid quotation ID' });
@@ -1259,12 +1495,12 @@ app.delete('/api/admin/quotations/:id', requireAdmin, (req: AuthenticatedRequest
 });
 
 // Admin Contact Messages
-app.get('/api/admin/messages', requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/messages', requireAdmin, requirePrivilege('website'), (_req: AuthenticatedRequest, res: Response) => {
   const messages = db.prepare(`SELECT * FROM contact_messages ORDER BY created_at DESC`).all();
   res.json({ messages });
 });
 
-app.patch('/api/admin/messages/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.patch('/api/admin/messages/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   const status = String(req.body?.status || '').trim();
   if (!Number.isInteger(id) || !['unread', 'read', 'archived'].includes(status)) {
@@ -1276,7 +1512,7 @@ app.patch('/api/admin/messages/:id', requireAdmin, (req: AuthenticatedRequest, r
 });
 
 // Admin Client Reviews Moderation
-app.get('/api/admin/reviews', requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/reviews', requireAdmin, requirePrivilege('website'), (_req: AuthenticatedRequest, res: Response) => {
   const reviews = db
     .prepare(`SELECT * FROM client_reviews ORDER BY id DESC`)
     .all()
@@ -1284,13 +1520,600 @@ app.get('/api/admin/reviews', requireAdmin, (_req: AuthenticatedRequest, res: Re
   res.json({ reviews });
 });
 
-app.delete('/api/admin/reviews/:id', requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+app.delete('/api/admin/reviews/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: 'Invalid review ID' });
     return;
   }
   db.prepare(`DELETE FROM client_reviews WHERE id = ?`).run(id);
+  res.json({ deleted: true });
+});
+
+// ============================================================
+// WEBSITE MANAGEMENT CMS ROUTES (privilege: 'website')
+// ============================================================
+
+const ALLOWED_SITE_CONTENT_KEYS = new Set([
+  'hero_image_url',
+  'hero_tagline_en',
+  'hero_tagline_ar',
+  'hero_headline_en',
+  'hero_headline_highlight_en',
+  'hero_headline_suffix_en',
+  'hero_headline_ar',
+  'hero_headline_highlight_ar',
+  'hero_headline_suffix_ar',
+  'hero_subtitle_en',
+  'hero_subtitle_ar',
+  'hero_quote_en',
+  'hero_card_eyebrow_en',
+  'hero_card_eyebrow_ar',
+  'hero_card_caption_en',
+  'hero_card_caption_ar',
+  'about_headline_en',
+  'about_headline_ar',
+  'about_p1_en',
+  'about_p1_ar',
+  'about_p2_en',
+  'about_p2_ar',
+  'about_quote_en',
+  'about_quote_ar',
+  'vision_en',
+  'vision_ar',
+  'mission_en',
+  'mission_ar',
+  'about_hq_image_url',
+  'about_vision_image_url',
+  'about_strategic_title_en',
+  'about_strategic_title_ar',
+  'about_strategic_p1_en',
+  'about_strategic_p2_en',
+  'contact_sales_email',
+  'contact_support_email',
+  'contact_general_email',
+  'contact_bahrain_phone',
+  'contact_ksa_phone',
+  'contact_oman_phone',
+  'contact_ops_phone',
+  'contact_workshop_phone',
+  'contact_hours_en',
+  'contact_hours_short_en',
+  'contact_hq_summary_en',
+  'contact_sales_lead',
+  'contact_ops_lead',
+  'contact_workshop_lead',
+  'contact_hero_title_en',
+  'contact_hero_subtitle_en',
+]);
+
+const IMAGE_SITE_CONTENT_KEYS = new Set([
+  'hero_image_url',
+  'about_hq_image_url',
+  'about_vision_image_url',
+]);
+
+app.post(
+  '/api/admin/upload',
+  requireAdmin,
+  requirePrivilege('website'),
+  upload.single('image'),
+  (req: AuthenticatedRequest, res: Response) => {
+    if (!req.file) {
+      res.status(422).json({ error: 'Please select a JPG, PNG, or WEBP image file (max 5MB).' });
+      return;
+    }
+    res.status(201).json({ image_url: `/uploads/${req.file.filename}` });
+  }
+);
+
+app.get('/api/admin/site-content', requireAdmin, requirePrivilege('website'), (_req: AuthenticatedRequest, res: Response) => {
+  const content = getSiteContentMap();
+  const gallery = db.prepare(`SELECT * FROM about_gallery ORDER BY sort_order ASC, id ASC`).all();
+  const branches = db
+    .prepare(`SELECT * FROM branches ORDER BY is_hq DESC, id ASC`)
+    .all()
+    .map((b) => ({
+      ...(b as Record<string, unknown>),
+      is_hq: Boolean((b as Record<string, unknown>).is_hq),
+    }));
+  const workshops = db.prepare(`SELECT * FROM workshops ORDER BY id ASC`).all();
+  const availableAssets = listAvailableStudioAssets();
+  res.json({ content, gallery, branches, workshops, availableAssets });
+});
+
+app.put('/api/admin/site-content', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const updates = req.body?.content;
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    res.status(422).json({ error: 'Invalid site content payload.' });
+    return;
+  }
+
+  const upsert = db.prepare(`INSERT OR REPLACE INTO site_content (key, value) VALUES (?, ?)`);
+  const tx = db.transaction(() => {
+    for (const [key, rawVal] of Object.entries(updates as Record<string, unknown>)) {
+      if (!ALLOWED_SITE_CONTENT_KEYS.has(key)) continue;
+      if (IMAGE_SITE_CONTENT_KEYS.has(key)) {
+        const cleanUrl = sanitizeImageUrl(rawVal);
+        if (cleanUrl) {
+          upsert.run(key, cleanUrl);
+        }
+      } else {
+        const cleanText = String(rawVal ?? '').trim().slice(0, 2000);
+        upsert.run(key, cleanText);
+      }
+    }
+  });
+  tx();
+
+  res.json({ content: getSiteContentMap() });
+});
+
+// About Us Gallery CRUD
+app.post(
+  '/api/admin/gallery',
+  requireAdmin,
+  requirePrivilege('website'),
+  upload.single('image'),
+  (req: AuthenticatedRequest, res: Response) => {
+    const b = req.body || {};
+    const title = String(b.title || '').trim().slice(0, 140);
+    const titleAr = String(b.title_ar || '').trim().slice(0, 140);
+    const caption = String(b.caption || '').trim().slice(0, 400);
+    const captionAr = String(b.caption_ar || '').trim().slice(0, 400);
+    const sortOrder = Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : 0;
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : sanitizeImageUrl(b.image_url);
+
+    if (title.length < 2) {
+      res.status(422).json({ error: 'Please provide a gallery photo title.' });
+      return;
+    }
+    if (!imageUrl) {
+      res.status(422).json({ error: 'Please upload an image or choose an existing studio asset.' });
+      return;
+    }
+
+    const info = db
+      .prepare(
+        `INSERT INTO about_gallery (title, title_ar, caption, caption_ar, image_url, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(title, titleAr, caption, captionAr, imageUrl, sortOrder);
+
+    const item = db.prepare(`SELECT * FROM about_gallery WHERE id = ?`).get(info.lastInsertRowid);
+    res.status(201).json({ item });
+  }
+);
+
+app.put(
+  '/api/admin/gallery/:id',
+  requireAdmin,
+  requirePrivilege('website'),
+  upload.single('image'),
+  (req: AuthenticatedRequest, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: 'Invalid gallery item ID' });
+      return;
+    }
+    const existing = db.prepare(`SELECT * FROM about_gallery WHERE id = ?`).get(id) as
+      | { id: number; image_url: string; title: string; title_ar: string; caption: string; caption_ar: string; sort_order: number }
+      | undefined;
+    if (!existing) {
+      res.status(404).json({ error: 'Gallery item not found' });
+      return;
+    }
+
+    const b = req.body || {};
+    const title = String(b.title ?? existing.title).trim().slice(0, 140);
+    const titleAr = String(b.title_ar ?? existing.title_ar).trim().slice(0, 140);
+    const caption = String(b.caption ?? existing.caption).trim().slice(0, 400);
+    const captionAr = String(b.caption_ar ?? existing.caption_ar).trim().slice(0, 400);
+    const sortOrder = b.sort_order !== undefined && Number.isFinite(Number(b.sort_order))
+      ? Number(b.sort_order)
+      : existing.sort_order;
+
+    let imageUrl = existing.image_url;
+    if (req.file) {
+      imageUrl = `/uploads/${req.file.filename}`;
+    } else if (typeof b.image_url === 'string' && b.image_url.trim()) {
+      const clean = sanitizeImageUrl(b.image_url);
+      if (clean) imageUrl = clean;
+    }
+
+    if (title.length < 2) {
+      res.status(422).json({ error: 'Please provide a gallery photo title.' });
+      return;
+    }
+
+    db.prepare(
+      `UPDATE about_gallery SET title = ?, title_ar = ?, caption = ?, caption_ar = ?, image_url = ?, sort_order = ? WHERE id = ?`
+    ).run(title, titleAr, caption, captionAr, imageUrl, sortOrder, id);
+
+    if (imageUrl !== existing.image_url) {
+      cleanupUploadedImage(existing.image_url);
+    }
+
+    const item = db.prepare(`SELECT * FROM about_gallery WHERE id = ?`).get(id);
+    res.json({ item });
+  }
+);
+
+app.delete('/api/admin/gallery/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid gallery item ID' });
+    return;
+  }
+  const existing = db.prepare(`SELECT image_url FROM about_gallery WHERE id = ?`).get(id) as
+    | { image_url: string }
+    | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Gallery item not found' });
+    return;
+  }
+  db.prepare(`DELETE FROM about_gallery WHERE id = ?`).run(id);
+  cleanupUploadedImage(existing.image_url);
+  res.json({ deleted: true });
+});
+
+// Branches CRUD
+app.post('/api/admin/branches', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 120);
+  const nameAr = String(b.name_ar || '').trim().slice(0, 120);
+  const country = String(b.country || 'Saudi Arabia').trim();
+  const city = String(b.city || '').trim().slice(0, 80);
+  const phone = String(b.phone || '').trim().slice(0, 40);
+  const address = String(b.address || '').trim().slice(0, 200);
+  const hours = String(b.hours || 'Sun–Thu · 8:30 AM – 5:30 PM').trim().slice(0, 120);
+  const focus = String(b.focus || '').trim().slice(0, 200);
+  const isHq = b.is_hq ? 1 : 0;
+  const mapX = Math.max(50, Math.min(950, Number(b.map_x) || 565));
+  const mapY = Math.max(50, Math.min(580, Number(b.map_y) || 256));
+
+  if (name.length < 2 || city.length < 2 || phone.length < 6) {
+    res.status(422).json({ error: 'Branch name, city, and phone are required.' });
+    return;
+  }
+  if (!VALID_COUNTRIES.has(country)) {
+    res.status(422).json({ error: 'Country must be Bahrain, Saudi Arabia, or Oman.' });
+    return;
+  }
+
+  const info = db
+    .prepare(
+      `INSERT INTO branches (name, name_ar, country, city, phone, is_hq, address, hours, map_x, map_y, focus)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(name, nameAr, country, city, phone, isHq, address || `${city}, ${country}`, hours, mapX, mapY, focus);
+
+  const row = db.prepare(`SELECT * FROM branches WHERE id = ?`).get(info.lastInsertRowid) as Record<string, unknown>;
+  res.status(201).json({ branch: { ...row, is_hq: Boolean(row.is_hq) } });
+});
+
+app.put('/api/admin/branches/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid branch ID' });
+    return;
+  }
+  const existing = db.prepare(`SELECT * FROM branches WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Branch not found' });
+    return;
+  }
+  const b = req.body || {};
+  const name = String(b.name ?? existing.name).trim().slice(0, 120);
+  const nameAr = String(b.name_ar ?? existing.name_ar).trim().slice(0, 120);
+  const country = String(b.country ?? existing.country).trim();
+  const city = String(b.city ?? existing.city).trim().slice(0, 80);
+  const phone = String(b.phone ?? existing.phone).trim().slice(0, 40);
+  const address = String(b.address ?? existing.address).trim().slice(0, 200);
+  const hours = String(b.hours ?? existing.hours).trim().slice(0, 120);
+  const focus = String(b.focus ?? existing.focus).trim().slice(0, 200);
+  const isHq = b.is_hq !== undefined ? (b.is_hq ? 1 : 0) : Number(existing.is_hq || 0);
+  const mapX = b.map_x !== undefined ? Math.max(50, Math.min(950, Number(b.map_x) || 565)) : Number(existing.map_x || 565);
+  const mapY = b.map_y !== undefined ? Math.max(50, Math.min(580, Number(b.map_y) || 256)) : Number(existing.map_y || 256);
+
+  if (name.length < 2 || city.length < 2 || phone.length < 6) {
+    res.status(422).json({ error: 'Branch name, city, and phone are required.' });
+    return;
+  }
+  if (!VALID_COUNTRIES.has(country)) {
+    res.status(422).json({ error: 'Country must be Bahrain, Saudi Arabia, or Oman.' });
+    return;
+  }
+
+  db.prepare(
+    `UPDATE branches SET name = ?, name_ar = ?, country = ?, city = ?, phone = ?, is_hq = ?, address = ?, hours = ?, map_x = ?, map_y = ?, focus = ? WHERE id = ?`
+  ).run(name, nameAr, country, city, phone, isHq, address, hours, mapX, mapY, focus, id);
+
+  const row = db.prepare(`SELECT * FROM branches WHERE id = ?`).get(id) as Record<string, unknown>;
+  res.json({ branch: { ...row, is_hq: Boolean(row.is_hq) } });
+});
+
+app.delete('/api/admin/branches/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid branch ID' });
+    return;
+  }
+  db.prepare(`DELETE FROM branches WHERE id = ?`).run(id);
+  res.json({ deleted: true });
+});
+
+// Workshops CRUD
+app.post('/api/admin/workshops', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 120);
+  const nameAr = String(b.name_ar || '').trim().slice(0, 120);
+  const branchName = String(b.branch_name || b.city || '').trim().slice(0, 100);
+  const city = String(b.city || '').trim().slice(0, 80);
+  const country = String(b.country || 'Saudi Arabia').trim();
+  const phone = String(b.phone || '').trim().slice(0, 40);
+  const hours = String(b.hours || 'Sun–Thu · 8:00 AM – 6:00 PM').trim().slice(0, 120);
+  const address = String(b.address || '').trim().slice(0, 200);
+  const mapX = Math.max(50, Math.min(950, Number(b.map_x) || 554));
+  const mapY = Math.max(50, Math.min(580, Number(b.map_y) || 274));
+
+  if (name.length < 2 || city.length < 2 || phone.length < 6) {
+    res.status(422).json({ error: 'Workshop name, city, and phone are required.' });
+    return;
+  }
+  if (!VALID_COUNTRIES.has(country)) {
+    res.status(422).json({ error: 'Country must be Bahrain, Saudi Arabia, or Oman.' });
+    return;
+  }
+
+  const info = db
+    .prepare(
+      `INSERT INTO workshops (name, name_ar, branch_name, city, country, phone, hours, address, map_x, map_y)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(name, nameAr, branchName, city, country, phone, hours, address || `${city}, ${country}`, mapX, mapY);
+
+  const workshop = db.prepare(`SELECT * FROM workshops WHERE id = ?`).get(info.lastInsertRowid);
+  res.status(201).json({ workshop });
+});
+
+app.put('/api/admin/workshops/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid workshop ID' });
+    return;
+  }
+  const existing = db.prepare(`SELECT * FROM workshops WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Workshop not found' });
+    return;
+  }
+  const b = req.body || {};
+  const name = String(b.name ?? existing.name).trim().slice(0, 120);
+  const nameAr = String(b.name_ar ?? existing.name_ar).trim().slice(0, 120);
+  const branchName = String(b.branch_name ?? existing.branch_name).trim().slice(0, 100);
+  const city = String(b.city ?? existing.city).trim().slice(0, 80);
+  const country = String(b.country ?? existing.country).trim();
+  const phone = String(b.phone ?? existing.phone).trim().slice(0, 40);
+  const hours = String(b.hours ?? existing.hours).trim().slice(0, 120);
+  const address = String(b.address ?? existing.address).trim().slice(0, 200);
+  const mapX = b.map_x !== undefined ? Math.max(50, Math.min(950, Number(b.map_x) || 554)) : Number(existing.map_x || 554);
+  const mapY = b.map_y !== undefined ? Math.max(50, Math.min(580, Number(b.map_y) || 274)) : Number(existing.map_y || 274);
+
+  if (name.length < 2 || city.length < 2 || phone.length < 6) {
+    res.status(422).json({ error: 'Workshop name, city, and phone are required.' });
+    return;
+  }
+  if (!VALID_COUNTRIES.has(country)) {
+    res.status(422).json({ error: 'Country must be Bahrain, Saudi Arabia, or Oman.' });
+    return;
+  }
+
+  db.prepare(
+    `UPDATE workshops SET name = ?, name_ar = ?, branch_name = ?, city = ?, country = ?, phone = ?, hours = ?, address = ?, map_x = ?, map_y = ? WHERE id = ?`
+  ).run(name, nameAr, branchName, city, country, phone, hours, address, mapX, mapY, id);
+
+  const workshop = db.prepare(`SELECT * FROM workshops WHERE id = ?`).get(id);
+  res.json({ workshop });
+});
+
+app.delete('/api/admin/workshops/:id', requireAdmin, requirePrivilege('website'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid workshop ID' });
+    return;
+  }
+  db.prepare(`DELETE FROM workshops WHERE id = ?`).run(id);
+  res.json({ deleted: true });
+});
+
+// ============================================================
+// ADMIN TEAM & SECTION PRIVILEGES CRUD (privilege: 'admins')
+// ============================================================
+
+function formatAdminUserRow(row: Record<string, unknown>) {
+  const role: 'super_admin' | 'staff' = row.role === 'super_admin' ? 'super_admin' : 'staff';
+  return {
+    id: Number(row.id),
+    name: String(row.name || ''),
+    email: String(row.email || ''),
+    role,
+    privileges: normalizePrivileges(row.privileges, role),
+    is_active: Boolean(row.is_active ?? 1),
+    created_at: String(row.created_at || ''),
+  };
+}
+
+app.get('/api/admin/users', requireAdmin, requirePrivilege('admins'), (_req: AuthenticatedRequest, res: Response) => {
+  const rows = db
+    .prepare(`SELECT id, name, email, role, privileges, is_active, created_at FROM admin_users ORDER BY id ASC`)
+    .all()
+    .map((r) => formatAdminUserRow(r as Record<string, unknown>));
+  res.json({ users: rows });
+});
+
+app.post('/api/admin/users', requireAdmin, requirePrivilege('admins'), (req: AuthenticatedRequest, res: Response) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 80);
+  const email = String(b.email || '').trim().toLowerCase();
+  const password = String(b.password || '');
+  const role: 'super_admin' | 'staff' = b.role === 'super_admin' ? 'super_admin' : 'staff';
+  const privileges = normalizePrivileges(b.privileges, role);
+
+  if (name.length < 2) {
+    res.status(422).json({ error: 'Please provide the administrator name (at least 2 characters).' });
+    return;
+  }
+  if (!EMAIL_REGEX.test(email) || email.length > 150) {
+    res.status(422).json({ error: 'Please enter a valid email address.' });
+    return;
+  }
+  if (password.length < 8) {
+    res.status(422).json({ error: 'Password must be at least 8 characters.' });
+    return;
+  }
+  if (privileges.length === 0) {
+    res.status(422).json({ error: 'Select at least one section privilege for this administrator.' });
+    return;
+  }
+
+  const existing = db.prepare(`SELECT id FROM admin_users WHERE LOWER(email) = ?`).get(email);
+  if (existing) {
+    res.status(409).json({ error: 'An administrator account with this email already exists.' });
+    return;
+  }
+
+  const passwordHash = hashPassword(password);
+  const info = db
+    .prepare(
+      `INSERT INTO admin_users (name, email, password_hash, is_admin, role, privileges, is_active)
+       VALUES (?, ?, ?, 1, ?, ?, 1)`
+    )
+    .run(name, email, passwordHash, role, JSON.stringify(privileges));
+
+  const created = db
+    .prepare(`SELECT id, name, email, role, privileges, is_active, created_at FROM admin_users WHERE id = ?`)
+    .get(info.lastInsertRowid) as Record<string, unknown>;
+  res.status(201).json({ user: formatAdminUserRow(created) });
+});
+
+app.put('/api/admin/users/:id', requireAdmin, requirePrivilege('admins'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid administrator ID' });
+    return;
+  }
+  const existing = db
+    .prepare(`SELECT id, name, email, role, privileges, is_active FROM admin_users WHERE id = ?`)
+    .get(id) as
+    | { id: number; name: string; email: string; role: string; privileges: string; is_active: number }
+    | undefined;
+  if (!existing) {
+    res.status(404).json({ error: 'Administrator account not found' });
+    return;
+  }
+
+  const b = req.body || {};
+  const name = String(b.name ?? existing.name).trim().slice(0, 80);
+  const email = String(b.email ?? existing.email).trim().toLowerCase();
+  const role: 'super_admin' | 'staff' = b.role === 'super_admin' ? 'super_admin' : 'staff';
+  const privileges = normalizePrivileges(b.privileges ?? existing.privileges, role);
+  const isActive = b.is_active !== undefined ? (b.is_active ? 1 : 0) : existing.is_active;
+  const newPassword = typeof b.password === 'string' ? b.password : '';
+
+  if (name.length < 2) {
+    res.status(422).json({ error: 'Administrator name must be at least 2 characters.' });
+    return;
+  }
+  if (!EMAIL_REGEX.test(email)) {
+    res.status(422).json({ error: 'Please provide a valid email address.' });
+    return;
+  }
+  if (privileges.length === 0) {
+    res.status(422).json({ error: 'Select at least one section privilege.' });
+    return;
+  }
+  if (newPassword && newPassword.length < 8) {
+    res.status(422).json({ error: 'New password must be at least 8 characters.' });
+    return;
+  }
+
+  const duplicate = db
+    .prepare(`SELECT id FROM admin_users WHERE LOWER(email) = ? AND id != ?`)
+    .get(email, id);
+  if (duplicate) {
+    res.status(409).json({ error: 'Another administrator already uses this email address.' });
+    return;
+  }
+
+  // Prevent locking out the last active super admin / admin manager
+  const willStillManageAdmins = isActive === 1 && (role === 'super_admin' || privileges.includes('admins'));
+  if (!willStillManageAdmins) {
+    const otherManagers = db
+      .prepare(
+        `SELECT id, role, privileges FROM admin_users WHERE id != ? AND is_active = 1 AND is_admin = 1`
+      )
+      .all(id) as Array<{ id: number; role: string; privileges: string }>;
+    const hasAnotherManager = otherManagers.some(
+      (u) => u.role === 'super_admin' || normalizePrivileges(u.privileges, u.role).includes('admins')
+    );
+    if (!hasAnotherManager && getEnvPasscode().length === 0) {
+      res.status(422).json({
+        error: 'At least one active administrator with Admin Management privileges must remain.',
+      });
+      return;
+    }
+  }
+
+  if (newPassword) {
+    const passwordHash = hashPassword(newPassword);
+    db.prepare(
+      `UPDATE admin_users SET name = ?, email = ?, role = ?, privileges = ?, is_active = ?, password_hash = ? WHERE id = ?`
+    ).run(name, email, role, JSON.stringify(privileges), isActive, passwordHash, id);
+    // Invalidate existing sessions on password change
+    db.prepare(`DELETE FROM admin_sessions WHERE admin_id = ?`).run(id);
+  } else {
+    db.prepare(
+      `UPDATE admin_users SET name = ?, email = ?, role = ?, privileges = ?, is_active = ? WHERE id = ?`
+    ).run(name, email, role, JSON.stringify(privileges), isActive, id);
+    if (isActive === 0) {
+      db.prepare(`DELETE FROM admin_sessions WHERE admin_id = ?`).run(id);
+    }
+  }
+
+  const updated = db
+    .prepare(`SELECT id, name, email, role, privileges, is_active, created_at FROM admin_users WHERE id = ?`)
+    .get(id) as Record<string, unknown>;
+  res.json({ user: formatAdminUserRow(updated) });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, requirePrivilege('admins'), (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: 'Invalid administrator ID' });
+    return;
+  }
+  if (req.admin?.id === id) {
+    res.status(422).json({ error: 'You cannot delete your own active administrator account.' });
+    return;
+  }
+  const otherManagers = db
+    .prepare(`SELECT id, role, privileges FROM admin_users WHERE id != ? AND is_active = 1 AND is_admin = 1`)
+    .all(id) as Array<{ id: number; role: string; privileges: string }>;
+  const hasAnotherManager = otherManagers.some(
+    (u) => u.role === 'super_admin' || normalizePrivileges(u.privileges, u.role).includes('admins')
+  );
+  if (!hasAnotherManager && getEnvPasscode().length === 0) {
+    res.status(422).json({ error: 'Cannot delete the last remaining administrator.' });
+    return;
+  }
+
+  db.prepare(`DELETE FROM admin_sessions WHERE admin_id = ?`).run(id);
+  const info = db.prepare(`DELETE FROM admin_users WHERE id = ?`).run(id);
+  if (info.changes === 0) {
+    res.status(404).json({ error: 'Administrator account not found' });
+    return;
+  }
   res.json({ deleted: true });
 });
 
@@ -1311,14 +2134,45 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: 'custom',
     });
     app.use(vite.middlewares);
+
+    app.get('*', async (req: Request, res: Response, next: NextFunction) => {
+      if (
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/uploads/') ||
+        req.path.startsWith('/assets/') ||
+        /\.[a-z0-9]{2,6}$/i.test(req.path)
+      ) {
+        next();
+        return;
+      }
+      try {
+        const indexPath = path.resolve(process.cwd(), 'index.html');
+        let template = fs.readFileSync(indexPath, 'utf-8');
+        template = await vite.transformIndexHtml(req.originalUrl, template);
+        const html = injectRouteSeoHtml(template, req.originalUrl, getOrigin(req));
+        res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(html);
+      } catch (err) {
+        vite.ssrFixStacktrace(err as Error);
+        next(err);
+      }
+    });
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    const indexPath = path.join(distDir, 'index.html');
+    const templateHtml = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, 'utf-8') : '';
+    app.use(express.static(distDir, { index: false }));
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+        next();
+        return;
+      }
+      const html = templateHtml
+        ? injectRouteSeoHtml(templateHtml, req.originalUrl, getOrigin(req))
+        : '';
+      res.status(200).set({ 'Content-Type': 'text/html; charset=utf-8' }).end(html);
     });
   }
 
